@@ -18,10 +18,12 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+bash scripts/apply_vllm_batch_invariant_patch.sh
 ```
 
 The run used `vllm==0.22.1`. The important custom deterministic requirement is
-that the vLLM build must expose `VLLM_BATCH_INVARIANT`.
+that the vLLM build must be patched to expose `VLLM_BATCH_INVARIANT` and the
+deterministic greedy-logit controls.
 
 ```bash
 python - <<'PY'
@@ -30,6 +32,8 @@ import vllm.envs as envs
 
 print("vllm", md.version("vllm"))
 assert hasattr(envs, "VLLM_BATCH_INVARIANT")
+assert hasattr(envs, "VLLM_DETERMINISTIC_LOGIT_BAND")
+assert hasattr(envs, "VLLM_DETERMINISTIC_LOGIT_QUANTUM")
 print("VLLM_BATCH_INVARIANT support is present")
 PY
 ```
@@ -50,9 +54,7 @@ The benchmark sends `/v1/completions` requests with:
 - `seed=42`
 - `max_tokens=256`
 
-The deterministic pass compares exact response text for the same prompt across
-multiple concurrent request levels, then runs distinct prompts in forward and
-reverse order to catch batch-order dependent outputs.
+The deterministic pass compares exact response text for the same prompt across multiple concurrent request levels, then runs distinct prompts in forward and reverse order to catch batch-order dependent outputs.
 
 ## Server Settings
 
@@ -68,6 +70,12 @@ export CUDA_VISIBLE_DEVICES=0
 build used here, it routes execution through batch-invariant attention,
 linear/MoE, normalization, and greedy sampling paths and disables cascade
 attention. Fixed sampling parameters alone do not provide that guarantee.
+
+The patch file is `patches/vllm-0.22.1-batch-invariant.patch`. It preserves the
+local vLLM changes used on the original machine, including DeepSeek V4 decode
+padding to fixed `max_num_seqs` geometry, deterministic greedy-logit controls,
+and batch-invariant hooks in the affected attention, linear/MoE, and routing
+paths.
 
 Start the OpenAI-compatible server with:
 
@@ -112,9 +120,6 @@ python benchmark/bench_vllm_deterministic_inference.py \
   --min-requests 300
 ```
 
-Set `OPENAI_API_KEY` or pass `--api-key` when the server requires an
-authorization header.
+Set `OPENAI_API_KEY` or pass `--api-key` when the server requires an authorization header.
 
-The command prints JSON for machine-readable records and a Markdown throughput
-table for quick comparison. It exits non-zero when any deterministic comparison
-fails or when the best streamed output throughput is below `--min-output-tok-s`.
+The command prints JSON for machine-readable records and a Markdown throughput table for quick comparison. It exits non-zero when any deterministic comparison fails or when the best streamed output throughput is below `--min-output-tok-s`.
