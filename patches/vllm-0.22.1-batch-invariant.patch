@@ -1,0 +1,306 @@
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -84,6 +84,9 @@
+     VLLM_MAIN_CUDA_VERSION: str = "13.0"
+     VLLM_FLOAT32_MATMUL_PRECISION: Literal["highest", "high", "medium"] = "highest"
+     VLLM_BATCH_INVARIANT: bool = False
++    VLLM_DETERMINISTIC_LOGIT_QUANTUM: float = 0.0
++    VLLM_DETERMINISTIC_LOGIT_BAND: float = 0.0
++    VLLM_DETERMINISTIC_LOGIT_TIEBREAK: Literal["low", "high"] = "high"
+     VLLM_TRITON_ATTN_USE_TD: bool | None = None
+     MAX_JOBS: str | None = None
+     NVCC_THREADS: str | None = None
+@@ -594,6 +597,21 @@
+     # Enable batch-invariant mode: deterministic results regardless of
+     # batch composition. Requires NVIDIA GPU with compute capability >= 9.0.
+     "VLLM_BATCH_INVARIANT": lambda: bool(int(os.getenv("VLLM_BATCH_INVARIANT", "0"))),
++    # Optional deterministic greedy decoding guard. When non-zero, greedy
++    # logits are rounded to this fixed grid before argmax under
++    # VLLM_BATCH_INVARIANT.
++    "VLLM_DETERMINISTIC_LOGIT_QUANTUM": lambda: float(
++        os.getenv("VLLM_DETERMINISTIC_LOGIT_QUANTUM", "0")
++    ),
++    # Optional deterministic greedy decoding band. When non-zero under
++    # VLLM_BATCH_INVARIANT, greedy decoding chooses a fixed token-id winner
++    # among logits within this margin of the row max.
++    "VLLM_DETERMINISTIC_LOGIT_BAND": lambda: float(
++        os.getenv("VLLM_DETERMINISTIC_LOGIT_BAND", "0")
++    ),
++    "VLLM_DETERMINISTIC_LOGIT_TIEBREAK": lambda: os.getenv(
++        "VLLM_DETERMINISTIC_LOGIT_TIEBREAK", "high"
++    ),
+     # Use tensor descriptors for Q/K/V loads and output stores in the
+     # Triton unified-attention kernel.  Enables HW 2D block reads on
+     # Intel Xe2/Xe3; the non-TD branch is dead-code-eliminated at Triton
+--- a/vllm/model_executor/layers/fused_moe/experts/gpt_oss_triton_kernels_moe.py
++++ b/vllm/model_executor/layers/fused_moe/experts/gpt_oss_triton_kernels_moe.py
+@@ -761,6 +761,10 @@
+         ]
+ 
+     @staticmethod
++    def _supports_batch_invariance() -> bool:
++        return True
++
++    @staticmethod
+     def activation_format() -> mk.FusedMoEActivationFormat:
+         return mk.FusedMoEActivationFormat.Standard
+ 
+--- a/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py
++++ b/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py
+@@ -1540,10 +1540,21 @@
+             w13_bias,
+             w2_bias,
+         )
++    elif mxfp4_backend == Mxfp4MoeBackend.EMULATION:
++        # No additional transformation needed for emulation backend;
++        # weights are dequantized on the fly in the experts class.
++        return (
++            w13_weight,
++            w2_weight,
++            w13_weight_scale,
++            w2_weight_scale,
++            w13_bias,
++            w2_bias,
++        )
+     else:
+         raise ValueError(
+             f"Unsupported mxfp4_backend for Mxfp4MoEMethod: {mxfp4_backend}. "
+-            f"Expected TRTLLM, Triton, AITER, or XPU backend."
++            f"Expected TRTLLM, Triton, AITER, XPU, or emulation backend."
+         )
+ 
+ 
+--- a/vllm/model_executor/layers/quantization/utils/humming_utils.py
++++ b/vllm/model_executor/layers/quantization/utils/humming_utils.py
+@@ -12,7 +12,7 @@
+     FusedMoEQuantConfig,
+     FusedMoEQuantDesc,
+ )
+-from vllm.model_executor.layers.fused_moe.routed_experts import RoutedExperts
++from vllm.model_executor.layers.fused_moe import RoutedExperts
+ from vllm.model_executor.layers.linear import LinearBase
+ from vllm.model_executor.layers.quantization.utils.quant_utils import GroupShape
+ 
+--- a/vllm/models/deepseek_v4/attention.py
++++ b/vllm/models/deepseek_v4/attention.py
+@@ -664,6 +664,7 @@
+         self.max_num_batched_tokens = (
+             vllm_config.scheduler_config.max_num_batched_tokens
+         )
++        self.decode_pad_tokens = vllm_config.scheduler_config.max_num_seqs
+         self.max_model_len = vllm_config.model_config.max_model_len
+         # DeepseekV4 only supports fp8 kv-cache format for now.
+         kv_cache_dtype = cache_config.cache_dtype if cache_config is not None else "fp8"
+--- a/vllm/models/deepseek_v4/nvidia/flashmla.py
++++ b/vllm/models/deepseek_v4/nvidia/flashmla.py
+@@ -251,6 +251,47 @@
+         # and later we only attend by generated indices.
+         # q arrives pre-padded to layer.padded_heads by the outer wrapper.
+         q = q.unsqueeze(1)
++        kernel_output = output
++
++        # FlashMLA's sparse decode planner depends on the decode batch shape.
++        # In batch-invariant mode, pad decode rows to a fixed shape so singleton
++        # and concurrent requests exercise the same scheduler/kernel geometry.
++        decode_pad_tokens = getattr(layer, "decode_pad_tokens", 0)
++        if decode_pad_tokens > num_decode_tokens:
++            pad_tokens = decode_pad_tokens - num_decode_tokens
++            q = torch.cat(
++                [q, q[:1].expand(pad_tokens, *q.shape[1:])],
++                dim=0,
++            ).contiguous()
++            swa_indices = torch.cat(
++                [
++                    swa_indices,
++                    swa_indices[:1].expand(pad_tokens, *swa_indices.shape[1:]),
++                ],
++                dim=0,
++            ).contiguous()
++            swa_lens = torch.cat(
++                [swa_lens, swa_lens[:1].expand(pad_tokens)],
++                dim=0,
++            ).contiguous()
++            if topk_indices is not None:
++                topk_indices = torch.cat(
++                    [
++                        topk_indices,
++                        topk_indices[:1].expand(pad_tokens, *topk_indices.shape[1:]),
++                    ],
++                    dim=0,
++                ).contiguous()
++            if topk_lens is not None:
++                topk_lens = torch.cat(
++                    [topk_lens, topk_lens[:1].expand(pad_tokens)],
++                    dim=0,
++                ).contiguous()
++            kernel_output = torch.empty(
++                (decode_pad_tokens, *output.shape[1:]),
++                dtype=output.dtype,
++                device=output.device,
++            )
+ 
+         # Prepare SWA cache (num_blocks, swa_block_size, 1, head_bytes)
+         # Use unsqueeze to preserve strides (handles padded blocks correctly)
+@@ -298,8 +339,10 @@
+             extra_k_cache=kv_cache if not swa_only else None,
+             extra_indices_in_kvcache=topk_indices,
+             extra_topk_length=topk_lens,
+-            out=output.unsqueeze(1),
++            out=kernel_output.unsqueeze(1),
+         )
++        if kernel_output is not output:
++            output.copy_(kernel_output[:num_decode_tokens])
+ 
+     @classmethod
+     def _forward_prefill(
+--- a/vllm/models/deepseek_v4/nvidia/model.py
++++ b/vllm/models/deepseek_v4/nvidia/model.py
+@@ -8,6 +8,7 @@
+ import torch
+ import torch.nn as nn
+ 
++import vllm.envs as envs
+ from vllm.compilation.decorators import support_torch_compile
+ from vllm.config import VllmConfig
+ from vllm.distributed import (
+@@ -1101,7 +1102,11 @@
+         # Disable them on ROCm / XPU because of hang issues / no overlap.
+         aux_stream_list = (
+             None
+-            if current_platform.is_rocm() or current_platform.is_xpu()
++            if (
++                envs.VLLM_BATCH_INVARIANT
++                or current_platform.is_rocm()
++                or current_platform.is_xpu()
++            )
+             else [torch.cuda.Stream() for _ in range(3)]
+         )
+ 
+--- a/vllm/models/deepseek_v4/nvidia/mtp.py
++++ b/vllm/models/deepseek_v4/nvidia/mtp.py
+@@ -18,6 +18,7 @@
+ import torch
+ import torch.nn as nn
+ 
++import vllm.envs as envs
+ from vllm.compilation.decorators import support_torch_compile
+ from vllm.config import VllmConfig
+ from vllm.distributed import (
+@@ -177,7 +178,7 @@
+         # DeepseekV4Model. ROCm runs the same work serially for now.
+         aux_stream_list = (
+             None
+-            if current_platform.is_rocm()
++            if envs.VLLM_BATCH_INVARIANT or current_platform.is_rocm()
+             else [torch.cuda.Stream() for _ in range(3)]
+         )
+ 
+--- a/vllm/third_party/triton_kernels/routing.py
++++ b/vllm/third_party/triton_kernels/routing.py
+@@ -121,6 +121,7 @@
+ 
+         blocks1b = cdiv(n_gates_pad * 2, MEMSET_BLOCK) + n_expts_tot + 1
+         blocks2b = cdiv(n_tokens_pad, HIST_BLOCK_M)
++        routing_block = triton.next_power_of_2(HIST_BLOCK_M * n_expts_act)
+ 
+         _combined_routing_memset[(blocks1a + blocks1b, )](
+             combined_indx, n_gates_pad * 2, -1, MEMSET_BLOCK, hist,  #
+@@ -140,7 +141,7 @@
+             expt_offs, n_tokens_raw,  # input shape
+             HIST_BLOCK_M, n_expts_act,  # constants
+             hist, token_offs_pad, token_offs_pad.stride(0), block_pid_map, block_pid_map.stride(0),  # outputs
+-            block_m_log2_start, block_m_num, HIST2_BLOCK_M, blocks2a,  # etc.
++            block_m_log2_start, block_m_num, HIST2_BLOCK_M, blocks2a, routing_block,  # etc.
+         )
+ 
+         ctx.n_tokens_raw = n_tokens_raw
+--- a/vllm/third_party/triton_kernels/routing_details/_routing_compute.py
++++ b/vllm/third_party/triton_kernels/routing_details/_routing_compute.py
+@@ -47,23 +47,28 @@
+ 
+ @triton.jit
+ def _routing_compute_indx(pid_m, GatherIndx, ScatterIndx, GateScal, ExptScal, ExptIndx, PartialOffs, stride_pm,
+-                          stride_pn, TokensStart, n_tokens, BLOCK_M: tl.constexpr, N_EXPTS_ACT: tl.constexpr):
++                          stride_pn, TokensStart, n_tokens, BLOCK_M: tl.constexpr, N_EXPTS_ACT: tl.constexpr,
++                          BLOCK_GATES: tl.constexpr):
+ 
+     if isinstance(n_tokens, tl.tensor) and n_tokens.dtype.is_ptr():
+         n_tokens = tl.load(n_tokens)
+     n_gates = n_tokens * N_EXPTS_ACT
++    n_gates_block: tl.constexpr = N_EXPTS_ACT * BLOCK_M
+ 
+-    tl.static_assert(N_EXPTS_ACT * BLOCK_M <= 32768)
+-
+-    local_offs = tl.arange(0, N_EXPTS_ACT * BLOCK_M)
+-    offs = pid_m * BLOCK_M * N_EXPTS_ACT + local_offs
+-    expert = tl.load(ExptIndx + offs, mask=(offs < n_gates), other=-1).to(tl.uint32)
++    tl.static_assert(n_gates_block <= 32768)
++    tl.static_assert(BLOCK_GATES >= n_gates_block)
++    tl.static_assert(BLOCK_GATES <= 32768)
++
++    local_offs = tl.arange(0, BLOCK_GATES)
++    offs = pid_m * n_gates_block + local_offs
++    valid = local_offs < n_gates_block
++    expert = tl.load(ExptIndx + offs, mask=valid & (offs < n_gates), other=-1).to(tl.uint32)
+ 
+     # stable-sort by expert ID:
+     kv_pairs = ((expert << 16) | local_offs).to(tl.uint32)
+     kv_pairs = tl.sort(kv_pairs, 0)
+     expert = kv_pairs >> 16
+-    offs = pid_m * BLOCK_M * N_EXPTS_ACT + (kv_pairs & 0xffff)
++    offs = pid_m * n_gates_block + (kv_pairs & 0xffff)
+     mask = expert != 0xffff
+     gate_scal = tl.load(ExptScal + offs, mask=mask)
+ 
+@@ -85,7 +90,7 @@
+ def _combined_routing_compute(GatherIndx, ScatterIndx, GateScal, ExptScal, ExptIndx, PartialOffs, stride_pm, stride_pn,
+                               TokensStart, n_tokens, BLOCK_M: tl.constexpr, N_EXPTS_ACT: tl.constexpr, Hist,
+                               MDTileStarts, tile_starts_stridem, MDTileInfo, tile_info_stridem, first_tile_dim_log2,
+-                              SIZES: tl.constexpr, BLOCK: tl.constexpr, blocks2a):
++                              SIZES: tl.constexpr, BLOCK: tl.constexpr, blocks2a, BLOCK_GATES: tl.constexpr):
+ 
+     pid = tl.program_id(0)
+     if pid < blocks2a:
+@@ -94,7 +99,7 @@
+     else:
+         pid -= blocks2a
+         _routing_compute_indx(pid, GatherIndx, ScatterIndx, GateScal, ExptScal, ExptIndx, PartialOffs, stride_pm,
+-                              stride_pn, TokensStart, n_tokens, BLOCK_M, N_EXPTS_ACT)
++                              stride_pn, TokensStart, n_tokens, BLOCK_M, N_EXPTS_ACT, BLOCK_GATES)
+ 
+ 
+ @triton.jit
+--- a/vllm/v1/sample/sampler.py
++++ b/vllm/v1/sample/sampler.py
+@@ -5,6 +5,7 @@
+ import torch
+ import torch.nn as nn
+ 
++from vllm import envs
+ from vllm.config.model import LogprobsMode
+ from vllm.utils.platform_utils import is_pin_memory_available
+ from vllm.v1.outputs import LogprobsTensors, SamplerOutput
+@@ -233,6 +234,23 @@
+ 
+     @staticmethod
+     def greedy_sample(logits: torch.Tensor) -> torch.Tensor:
++        if envs.VLLM_BATCH_INVARIANT:
++            band = envs.VLLM_DETERMINISTIC_LOGIT_BAND
++            if band > 0:
++                row_max = logits.max(dim=-1, keepdim=True).values
++                candidates = logits >= (row_max - band)
++                token_ids = torch.arange(
++                    logits.shape[-1], device=logits.device, dtype=torch.long
++                )
++                token_ids = token_ids.unsqueeze(0).expand(logits.shape[0], -1)
++                if envs.VLLM_DETERMINISTIC_LOGIT_TIEBREAK == "low":
++                    masked = torch.where(candidates, token_ids, logits.shape[-1])
++                    return masked.min(dim=-1).values.view(-1)
++                masked = torch.where(candidates, token_ids, -1)
++                return masked.max(dim=-1).values.view(-1)
++            quantum = envs.VLLM_DETERMINISTIC_LOGIT_QUANTUM
++            if quantum > 0:
++                logits = torch.round(logits / quantum) * quantum
+         return logits.argmax(dim=-1).view(-1)
+ 
+     def sample(
