@@ -34,6 +34,7 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+bash scripts/apply_vllm_batch_invariant_patch.sh
 ```
 
 If the model requires Hugging Face auth in your environment, set a token before
@@ -51,8 +52,8 @@ export HF_HOME="$PWD/hf-cache"
 
 ## Verify The Deterministic vLLM Build
 
-The server must use a vLLM build that exposes `VLLM_BATCH_INVARIANT`. Check
-that before serving:
+The server must use the patched vLLM build that exposes `VLLM_BATCH_INVARIANT`
+and the deterministic greedy-logit controls. Check that before serving:
 
 ```bash
 python - <<'PY'
@@ -61,13 +62,15 @@ import vllm.envs as envs
 
 print("vllm", md.version("vllm"))
 assert hasattr(envs, "VLLM_BATCH_INVARIANT")
+assert hasattr(envs, "VLLM_DETERMINISTIC_LOGIT_BAND")
+assert hasattr(envs, "VLLM_DETERMINISTIC_LOGIT_QUANTUM")
 print("VLLM_BATCH_INVARIANT support is present")
 PY
 ```
 
 If this check fails, the machine does not have the deterministic vLLM support
-used by this run. Install a vLLM build with batch-invariant mode before
-continuing.
+used by this run. Re-run `bash scripts/apply_vllm_batch_invariant_patch.sh`
+after installing `requirements.txt`.
 
 ## Start The Server
 
@@ -92,6 +95,14 @@ The script sets the deterministic runtime knobs and starts:
 
 Do not drop `VLLM_BATCH_INVARIANT=1`. That is the custom deterministic path
 that makes the run batch-composition invariant.
+
+## What The Patch Preserves
+
+`patches/vllm-0.22.1-batch-invariant.patch` captures the local vLLM changes
+that made this work. It changes the vLLM wheel in place to add deterministic
+environment flags, greedy-logit tie controls, DeepSeek V4 decode padding for a
+fixed scheduler geometry, and batch-invariant hooks in the affected attention,
+linear/MoE, and routing paths.
 
 ## Run The Probe
 
