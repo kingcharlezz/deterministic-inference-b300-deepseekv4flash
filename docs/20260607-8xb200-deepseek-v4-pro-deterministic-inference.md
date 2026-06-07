@@ -39,7 +39,9 @@ python -m py_compile benchmark/bench_deterministic_inference.py \
   scripts/preflight_8xb200_deepseek_v4_pro.py \
   scripts/tune_deepseek_v4_pro_8xb200.py \
   scripts/summarize_deepseek_v4_pro_run.py \
-  tests/test_benchmark_harness.py
+  scripts/run_8xb200_deepseek_v4_pro_pipeline.py \
+  tests/test_benchmark_harness.py \
+  tests/test_benchmark_cli_http.py
 ```
 
 Target-host preflight checks:

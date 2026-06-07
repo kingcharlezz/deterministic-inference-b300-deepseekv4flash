@@ -240,6 +240,7 @@ async def determinism_test(
     request_params: dict[str, Any],
     repeats: int,
     concurrencies: list[int],
+    order_checks: bool,
 ) -> dict[str, Any]:
     results: dict[str, Any] = {"same_prompt": [], "order": []}
     baseline = await generate_once(
@@ -279,6 +280,9 @@ async def determinism_test(
                     "same-prompt determinism failed at "
                     f"concurrency={concurrency}, repeat={repeat}, mismatches={mismatches}"
                 )
+
+    if not order_checks:
+        return results
 
     forward = await bounded_gather(
         [
@@ -451,6 +455,7 @@ async def main() -> int:
         help="Optional path for the benchmark Markdown table.",
     )
     parser.add_argument("--skip-determinism", action="store_true")
+    parser.add_argument("--skip-order-check", action="store_true")
     parser.add_argument("--skip-benchmark", action="store_true")
     parser.add_argument("--determinism-repeats", type=int, default=3)
     parser.add_argument("--min-requests", type=int, default=256)
@@ -507,6 +512,7 @@ async def main() -> int:
                 request_params,
                 args.determinism_repeats,
                 args.determinism_concurrencies,
+                not args.skip_order_check,
             )
         if not args.skip_benchmark:
             output["benchmark"] = await benchmark(

@@ -42,6 +42,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
                     request_params=bench.DEFAULT_SGLANG_REQUEST_PARAMS,
                     repeats=2,
                     concurrencies=[1, 4],
+                    order_checks=True,
                 )
             )
 
@@ -83,6 +84,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
                         request_params=bench.DEFAULT_SGLANG_REQUEST_PARAMS,
                         repeats=1,
                         concurrencies=[2],
+                        order_checks=True,
                     )
                 )
 

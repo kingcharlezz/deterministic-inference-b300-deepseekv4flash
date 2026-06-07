@@ -34,15 +34,18 @@ Fast local validation completed:
 python3 -m py_compile benchmark/bench_deterministic_inference.py
 python3 benchmark/bench_deterministic_inference.py --help
 python3 -m unittest discover -s tests
-10 harness/preflight/report tests passed.
+16 harness/preflight/report/CLI smoke tests passed.
 
 python3 -m py_compile benchmark/bench_deterministic_inference.py \
   scripts/preflight_8xb200_deepseek_v4_pro.py \
   scripts/tune_deepseek_v4_pro_8xb200.py \
   scripts/summarize_deepseek_v4_pro_run.py \
+  scripts/run_8xb200_deepseek_v4_pro_pipeline.py \
   tests/test_benchmark_harness.py \
+  tests/test_benchmark_cli_http.py \
   tests/test_run_summary.py \
-  tests/test_preflight.py
+  tests/test_preflight.py \
+  tests/test_pipeline.py
 completed without syntax errors.
 
 python3 scripts/preflight_8xb200_deepseek_v4_pro.py --engine sglang

@@ -34,6 +34,8 @@ batch size, request order, concurrency, and repeated runs.
   GPU, determinism rows, benchmark table, and throughput verdict.
 - `tests/test_benchmark_harness.py`: local tests for exact-output comparison,
   mismatch detection, metric aggregation, and benchmark table formatting.
+- `tests/test_benchmark_cli_http.py`: local fake-server tests for the benchmark
+  CLI against SGLang `/generate` and vLLM/OpenAI streaming completions.
 - `docs/20260607-8xb200-deepseek-v4-pro-deterministic-inference.md`: runbook,
   tuning ladder, and acceptance criteria.
 - `patches/vllm-0.22.1-batch-invariant.patch`: historical patch from the
