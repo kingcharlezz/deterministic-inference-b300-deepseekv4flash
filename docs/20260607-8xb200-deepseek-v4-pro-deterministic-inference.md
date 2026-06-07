@@ -62,7 +62,8 @@ python scripts/run_8xb200_deepseek_v4_pro_pipeline.py --engines sglang,vllm
 ```
 
 This writes `pipeline.json`, per-engine preflight JSON/logs, the tuner logs,
-and the final proof report. It only tunes engines that pass preflight.
+the final proof report, and failure triage artifacts. It only tunes engines
+that pass preflight.
 
 ## Determinism Requirements
 
@@ -251,11 +252,23 @@ Every attempt writes:
 - top-level `summary.json` and `summary.md`.
 - top-level `environment.json`;
 - top-level `pipeline.json` when using the full pipeline wrapper.
+- top-level `triage.json` and `triage.md` when a run fails.
 
 The runner stops at the first deterministic benchmark that exits `0`, which
 means best aggregate output throughput is at least 5,000 tok/s. If all variants
 fail, inspect the per-variant logs in order; a result below 2,500 output tok/s
 should be treated as misconfiguration rather than a tuned result.
+
+Manual failure triage:
+
+```bash
+python scripts/triage_deepseek_v4_pro_run.py runs/<timestamp>
+```
+
+The triage script recognizes missing GPU drivers, wrong GPU inventory, missing
+packages, unsupported flags, Hugging Face auth failures, CUDA OOMs, kernel/arch
+errors, NCCL/distributed failures, determinism mismatches, and below-target
+throughput.
 
 Generate and validate the final proof report after a passing run:
 

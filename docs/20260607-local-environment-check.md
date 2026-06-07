@@ -56,10 +56,14 @@ failed with structured JSON for missing NVIDIA driver and missing vLLM.
 
 python3 scripts/run_8xb200_deepseek_v4_pro_pipeline.py \
   --engines sglang,vllm \
-  --run-dir /tmp/deepseek-pipeline-negative \
+  --run-dir /tmp/deepseek-pipeline-negative-triage \
   --dry-run
 stopped after preflight with no selected engines and wrote pipeline/preflight
-logs under /tmp/deepseek-pipeline-negative.
+logs plus triage.json/triage.md under /tmp/deepseek-pipeline-negative-triage.
+
+python3 scripts/triage_deepseek_v4_pro_run.py /tmp/deepseek-pipeline-negative-triage
+reported missing packages, unavailable NVIDIA driver, and failed preflight for
+both engines.
 
 python3 scripts/summarize_deepseek_v4_pro_run.py --help
 displayed the final proof report CLI.

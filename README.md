@@ -24,6 +24,8 @@ batch size, request order, concurrency, and repeated runs.
 - `scripts/run_8xb200_deepseek_v4_pro_pipeline.py`: one-command target-host
   pipeline that preflights selected engines, tunes passing engines, and writes
   the final proof report.
+- `scripts/triage_deepseek_v4_pro_run.py`: scans run logs/results and writes
+  JSON/Markdown failure triage with concrete next actions.
 - `benchmark/bench_deterministic_inference.py`: backend-aware deterministic
   correctness and throughput probe.
 - `scripts/tune_deepseek_v4_pro_8xb200.py`: host-side tuning loop that tries
@@ -198,6 +200,13 @@ python scripts/tune_deepseek_v4_pro_8xb200.py --engines sglang,vllm
 
 The full pipeline wrapper runs this tuner after preflighting each selected
 engine and skips engines that fail preflight.
+
+When a run fails, the full pipeline writes `triage.json` and `triage.md`
+automatically. You can also triage an existing run directory manually:
+
+```bash
+python scripts/triage_deepseek_v4_pro_run.py runs/<timestamp>
+```
 
 Each attempt writes `server.log`, `benchmark.log`, `result.json`, and
 `benchmark.md` under `runs/<timestamp>/<variant>/`. The runner exits `0` on

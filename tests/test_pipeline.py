@@ -55,6 +55,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         state = json.loads((run_dir / "pipeline.json").read_text(encoding="utf-8"))
         self.assertEqual(state["selected_engines"], [])
+        self.assertIn("triage", state)
+        self.assertTrue((run_dir / "triage.json").exists())
 
     def test_run_command_records_exit_code_and_log(self) -> None:
         run_dir = Path(tempfile.mkdtemp())

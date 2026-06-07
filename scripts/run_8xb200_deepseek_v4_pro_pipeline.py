@@ -73,6 +73,21 @@ def write_pipeline_state(run_dir: Path, state: dict[str, Any]) -> None:
     )
 
 
+def run_triage(run_dir: Path, python: str) -> dict[str, Any]:
+    return run_command(
+        [
+            python,
+            "scripts/triage_deepseek_v4_pro_run.py",
+            str(run_dir),
+            "--json-output",
+            str(run_dir / "triage.json"),
+            "--markdown-output",
+            str(run_dir / "triage.md"),
+        ],
+        run_dir / "triage.log",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -122,6 +137,8 @@ def main() -> int:
         state["selected_engines"] = selected
         write_pipeline_state(run_dir, state)
         if not selected:
+            state["triage"] = run_triage(run_dir, args.python)
+            write_pipeline_state(run_dir, state)
             print(json.dumps(state, indent=2))
             print(f"No selected engine passed preflight; logs in {run_dir}", file=sys.stderr)
             return 2
@@ -164,6 +181,8 @@ def main() -> int:
     state["tune"] = run_command(tune_cmd, run_dir / "tune.log")
     write_pipeline_state(run_dir, state)
     if state["tune"]["exit_code"] != 0:
+        state["triage"] = run_triage(run_dir, args.python)
+        write_pipeline_state(run_dir, state)
         print(json.dumps(state, indent=2))
         print(f"Tuning did not reach target; logs in {run_dir}", file=sys.stderr)
         return int(state["tune"]["exit_code"] or 2)
