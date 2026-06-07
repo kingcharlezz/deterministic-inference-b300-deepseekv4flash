@@ -51,6 +51,13 @@ failed with structured JSON for missing NVIDIA driver and missing SGLang.
 VLLM_BATCH_INVARIANT=1 python3 scripts/preflight_8xb200_deepseek_v4_pro.py --engine vllm
 failed with structured JSON for missing NVIDIA driver and missing vLLM.
 
+python3 scripts/run_8xb200_deepseek_v4_pro_pipeline.py \
+  --engines sglang,vllm \
+  --run-dir /tmp/deepseek-pipeline-negative \
+  --dry-run
+stopped after preflight with no selected engines and wrote pipeline/preflight
+logs under /tmp/deepseek-pipeline-negative.
+
 python3 scripts/summarize_deepseek_v4_pro_run.py --help
 displayed the final proof report CLI.
 

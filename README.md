@@ -21,6 +21,9 @@ batch size, request order, concurrency, and repeated runs.
 - `scripts/preflight_8xb200_deepseek_v4_pro.py`: target-host checks for
   exactly 8 visible B200 GPUs, package presence, and required deterministic
   engine flags in SGLang/vLLM help output.
+- `scripts/run_8xb200_deepseek_v4_pro_pipeline.py`: one-command target-host
+  pipeline that preflights selected engines, tunes passing engines, and writes
+  the final proof report.
 - `benchmark/bench_deterministic_inference.py`: backend-aware deterministic
   correctness and throughput probe.
 - `scripts/tune_deepseek_v4_pro_8xb200.py`: host-side tuning loop that tries
@@ -74,6 +77,12 @@ Before launching a long model load, verify the target host and installed engine:
 ```bash
 python scripts/preflight_8xb200_deepseek_v4_pro.py --engine sglang
 VLLM_BATCH_INVARIANT=1 python scripts/preflight_8xb200_deepseek_v4_pro.py --engine vllm
+```
+
+To run preflight, tuning, and final report generation as one target-host flow:
+
+```bash
+python scripts/run_8xb200_deepseek_v4_pro_pipeline.py --engines sglang,vllm
 ```
 
 ## SGLang Primary
@@ -184,6 +193,9 @@ the deterministic throughput gate:
 ```bash
 python scripts/tune_deepseek_v4_pro_8xb200.py --engines sglang,vllm
 ```
+
+The full pipeline wrapper runs this tuner after preflighting each selected
+engine and skips engines that fail preflight.
 
 Each attempt writes `server.log`, `benchmark.log`, `result.json`, and
 `benchmark.md` under `runs/<timestamp>/<variant>/`. The runner exits `0` on

@@ -53,6 +53,15 @@ The preflight exits non-zero if `nvidia-smi` does not show exactly 8 B200 GPUs,
 the engine package is missing, the deterministic SGLang flag is absent, required
 vLLM serve flags are absent, or `VLLM_BATCH_INVARIANT=1` is missing for vLLM.
 
+One-command target-host pipeline:
+
+```bash
+python scripts/run_8xb200_deepseek_v4_pro_pipeline.py --engines sglang,vllm
+```
+
+This writes `pipeline.json`, per-engine preflight JSON/logs, the tuner logs,
+and the final proof report. It only tunes engines that pass preflight.
+
 ## Determinism Requirements
 
 The client request shape must be deterministic, but that is not sufficient.
@@ -238,6 +247,8 @@ Every attempt writes:
 - `result.json`;
 - `benchmark.md`;
 - top-level `summary.json` and `summary.md`.
+- top-level `environment.json`;
+- top-level `pipeline.json` when using the full pipeline wrapper.
 
 The runner stops at the first deterministic benchmark that exits `0`, which
 means best aggregate output throughput is at least 5,000 tok/s. If all variants
