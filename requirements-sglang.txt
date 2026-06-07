@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# PyPI latest observed on 2026-06-07.
+sglang[all]==0.5.12.post1

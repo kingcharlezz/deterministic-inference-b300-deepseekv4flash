@@ -1,30 +1,35 @@
-# deterministic-inference-b300-deepseekv4flash
+# deterministic-inference-8xb200-deepseek-v4-pro
 
-Reproducible deterministic inference harness for
-`deepseek-ai/deepseek-v4-flash` on B300 using an OpenAI-compatible vLLM
-endpoint.
+Deterministic high-throughput inference harness for
+`deepseek-ai/DeepSeek-V4-Pro` on 8x NVIDIA B200.
 
-This setup is intentionally specific. The deterministic run depended on both
-client-side request settings and vLLM's batch-invariant execution mode. Greedy
-sampling with `temperature=0` and a fixed seed is not enough by itself if the
-server can change outputs based on batch composition or request ordering.
+This repository started from an older 1x B300 DeepSeek V4 Flash vLLM setup.
+Treat those artifacts only as prior debugging notes. The current target is
+8x B200, tensor parallel size 8, DeepSeek-V4-Pro, deterministic engine-level
+batch-invariant execution, and at least 5,000 aggregate output tok/s.
+
+`temperature=0` is not enough. The server must use deterministic or
+batch-invariant execution, and the benchmark checks exact text equality across
+batch size, request order, concurrency, and repeated runs.
 
 ## What Is Included
 
-- `benchmark/bench_vllm_deterministic_inference.py`: same-prompt determinism,
-  order-invariance, and throughput checks.
-- `scripts/serve_b300_deepseek_v4_flash.sh`: the vLLM server command used for
-  the B300 DeepSeek V4 Flash run.
-- `docs/20260605-b300-deepseek-v4-flash-deterministic-inference.md`: detailed
-  runbook and notes on the deterministic pieces.
-- `requirements.txt`: Python packages for a fresh-machine setup.
+- `scripts/serve_sglang_deepseek_v4_pro_8xb200.sh`: primary SGLang launch
+  command for 8x B200 with deterministic inference enabled.
+- `scripts/serve_vllm_deepseek_v4_pro_8xb200.sh`: vLLM fallback with
+  `VLLM_BATCH_INVARIANT=1`.
+- `benchmark/bench_deterministic_inference.py`: backend-aware deterministic
+  correctness and throughput probe.
+- `docs/20260607-8xb200-deepseek-v4-pro-deterministic-inference.md`: runbook,
+  tuning ladder, and acceptance criteria.
+- `patches/vllm-0.22.1-batch-invariant.patch`: historical patch from the
+  original repo; use only if pinned to that old vLLM build.
 
 ## Fresh Machine Setup
 
-These commands assume a Linux B300 host with a working NVIDIA driver, internet
-access, and Python 3.12 available. The live run used `CUDA_VISIBLE_DEVICES=0`,
-`vllm==0.22.1`, `torch==2.11.0`, CUDA 13.3 Python wheels, and vLLM's
-`VLLM_BATCH_INVARIANT=1` path.
+These commands assume a Linux host with exactly 8 visible NVIDIA B200 GPUs, a
+working driver, internet access, Hugging Face access to DeepSeek-V4-Pro, and
+Python 3.12.
 
 ```bash
 git clone https://github.com/kingcharlezz/deterministic-inference-b300-deepseekv4flash.git
@@ -33,98 +38,121 @@ cd deterministic-inference-b300-deepseekv4flash
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-bash scripts/apply_vllm_batch_invariant_patch.sh
+python -m pip install -r requirements-sglang.txt
 ```
 
-If the model requires Hugging Face auth in your environment, set a token before
-starting the server:
+Use `requirements-vllm.txt` instead when validating the vLLM fallback in a
+separate environment. Avoid installing both engines into the same environment
+unless the target host image is known to support that combination.
+
+If the model requires Hugging Face auth in your environment:
 
 ```bash
 export HF_TOKEN=hf_...
-```
-
-Use a persistent model/cache directory so restarts do not redownload weights:
-
-```bash
 export HF_HOME="$PWD/hf-cache"
 ```
 
-## Verify The Deterministic vLLM Build
+## SGLang Primary
 
-The server must use the patched vLLM build that exposes `VLLM_BATCH_INVARIANT`
-and the deterministic greedy-logit controls. Check that before serving:
-
-```bash
-python - <<'PY'
-import importlib.metadata as md
-import vllm.envs as envs
-
-print("vllm", md.version("vllm"))
-assert hasattr(envs, "VLLM_BATCH_INVARIANT")
-assert hasattr(envs, "VLLM_DETERMINISTIC_LOGIT_BAND")
-assert hasattr(envs, "VLLM_DETERMINISTIC_LOGIT_QUANTUM")
-print("VLLM_BATCH_INVARIANT support is present")
-PY
-```
-
-If this check fails, the machine does not have the deterministic vLLM support
-used by this run. Re-run `bash scripts/apply_vllm_batch_invariant_patch.sh`
-after installing `requirements.txt`.
-
-## Start The Server
-
-In terminal 1:
+Start with FA3:
 
 ```bash
 source .venv/bin/activate
-export HF_HOME="${HF_HOME:-$PWD/hf-cache}"
-bash scripts/serve_b300_deepseek_v4_flash.sh
+bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
 ```
 
-The script sets the deterministic runtime knobs and starts:
+That expands to:
 
-- `VLLM_BATCH_INVARIANT=1`
-- `VLLM_ENABLE_V1_MULTIPROCESSING=0`
-- `CUDA_VISIBLE_DEVICES=0`
-- `--seed 0`
-- `--kv-cache-dtype fp8`
-- `--moe-backend triton_unfused`
-- `--attention-backend TRITON_MLA`
-- fixed CUDA graph capture sizes up to `50`
+```bash
+python -m sglang.launch_server \
+  --model-path deepseek-ai/DeepSeek-V4-Pro \
+  --host 0.0.0.0 \
+  --port 30000 \
+  --tp 8 \
+  --attention-backend fa3 \
+  --enable-deterministic-inference \
+  --mem-fraction-static 0.90
+```
 
-Do not drop `VLLM_BATCH_INVARIANT=1`. That is the custom deterministic path
-that makes the run batch-composition invariant.
+Try deterministic attention backends in this order when debugging:
 
-## What The Patch Preserves
+```bash
+ATTENTION_BACKEND=fa3 bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+ATTENTION_BACKEND=flashinfer bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+ATTENTION_BACKEND=triton bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+```
 
-`patches/vllm-0.22.1-batch-invariant.patch` captures the local vLLM changes
-that made this work. It changes the vLLM wheel in place to add deterministic
-environment flags, greedy-logit tie controls, DeepSeek V4 decode padding for a
-fixed scheduler geometry, and batch-invariant hooks in the affected attention,
-linear/MoE, and routing paths.
+If exact output comparisons vary, keep deterministic inference enabled and test:
 
-## Run The Probe
+```bash
+DISABLE_RADIX_CACHE=1 bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+TRITON_ATTENTION_SPLIT_TILE_SIZE=128 ATTENTION_BACKEND=triton bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+CHUNKED_PREFILL_SIZE=4096 bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+```
 
-In terminal 2:
+SGLang benchmark requests use:
+
+```json
+{"temperature":0,"top_p":1,"top_k":-1,"max_new_tokens":256}
+```
+
+Run the probe:
+
+```bash
+python benchmark/bench_deterministic_inference.py \
+  --backend sglang-native \
+  --base-url http://127.0.0.1:30000 \
+  --model deepseek-ai/DeepSeek-V4-Pro \
+  --hardware-label 8xB200
+```
+
+## vLLM Fallback
+
+If SGLang cannot load or cannot stay deterministic at target throughput:
 
 ```bash
 source .venv/bin/activate
-python benchmark/bench_vllm_deterministic_inference.py \
+bash scripts/serve_vllm_deepseek_v4_pro_8xb200.sh
+```
+
+That expands to:
+
+```bash
+VLLM_BATCH_INVARIANT=1 vllm serve deepseek-ai/DeepSeek-V4-Pro \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --seed 0 \
+  --tensor-parallel-size 8 \
+  --gpu-memory-utilization 0.90 \
+  --max-model-len 8192 \
+  --max-num-seqs 256 \
+  --max-num-batched-tokens 8192
+```
+
+vLLM benchmark requests use:
+
+```json
+{"temperature":0,"top_p":1,"max_tokens":256,"seed":42}
+```
+
+Run the fallback probe:
+
+```bash
+python benchmark/bench_deterministic_inference.py \
+  --backend openai-completions \
   --base-url http://127.0.0.1:8000 \
-  --model deepseek-ai/deepseek-v4-flash \
-  --hardware-label B300 \
-  --determinism-concurrencies 1,8,32,128,300 \
-  --concurrencies 1,4,8,16,32,64,128,256,300 \
-  --min-requests 300
+  --model deepseek-ai/DeepSeek-V4-Pro \
+  --hardware-label 8xB200
 ```
 
-The benchmark fails non-zero if:
+## Acceptance Criteria
 
-- identical deterministic prompts produce different text at any checked
-  concurrency;
-- the forward-order and reverse-order prompt checks disagree;
-- the best streamed throughput is below `--min-output-tok-s`.
+The benchmark repeats same-prompt checks at concurrency `1,8,32,128`, repeats
+each level 3 times, verifies prompt order invariance, then benchmarks
+concurrency `1,4,8,16,32,64,128,256`.
 
-The JSON output is the machine-readable record. The Markdown table is for quick
-throughput review.
+It reports output tok/s, prompt tok/s, total tok/s, req/s, TTFT p50/p95/p99,
+and latency p50/p95/p99. It exits non-zero if deterministic text comparison
+fails, if best output throughput is below 5,000 tok/s, or if throughput is
+below 2,500 tok/s, which should be treated as a misconfiguration. The stretch
+target is 8,000 output tok/s.

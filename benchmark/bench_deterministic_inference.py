@@ -9,13 +9,17 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
-
-import httpx
+from typing import Any
 
 
-DEFAULT_MODEL = "deepseek-ai/deepseek-v4-flash"
-DEFAULT_REQUEST_PARAMS = {
+DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
+DEFAULT_SGLANG_REQUEST_PARAMS = {
+    "temperature": 0,
+    "top_p": 1,
+    "top_k": -1,
+    "max_new_tokens": 256,
+}
+DEFAULT_VLLM_REQUEST_PARAMS = {
     "temperature": 0,
     "top_p": 1,
     "max_tokens": 256,
@@ -75,13 +79,29 @@ def percentile(values: list[float], pct: float) -> float:
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (rank - lo)
 
 
-def make_headers(api_key: Optional[str]) -> dict[str, str]:
+def make_headers(api_key: str | None) -> dict[str, str]:
     if not api_key:
         return {}
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def completion_payload(
+def build_benchmark_prompt(request_index: int) -> str:
+    return (
+        f"Benchmark request {request_index:04d}. Produce exactly 256 output "
+        "tokens of plain ASCII text about deterministic high-throughput ML "
+        "inference. Do not use markdown. Do not stop early. End only after a "
+        "complete final sentence."
+    )
+
+
+def sglang_native_payload(prompt: str, request_params: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "text": prompt,
+        "sampling_params": request_params,
+    }
+
+
+def openai_completion_payload(
     model: str,
     prompt: str,
     request_params: dict[str, Any],
@@ -98,16 +118,33 @@ def completion_payload(
     return payload
 
 
-def build_benchmark_prompt(request_index: int) -> str:
-    return (
-        f"Benchmark request {request_index:04d}. Produce exactly 256 output "
-        "tokens of plain ASCII text about deterministic high-throughput ML "
-        "inference. Do not use markdown. Do not stop early. End only after a "
-        "complete final sentence."
+async def generate_sglang_native(
+    client: httpx.AsyncClient,
+    base_url: str,
+    prompt: str,
+    request_params: dict[str, Any],
+) -> ResponseStats:
+    start = time.perf_counter()
+    response = await client.post(
+        f"{base_url.rstrip('/')}/generate",
+        json=sglang_native_payload(prompt, request_params),
+        timeout=None,
+    )
+    response.raise_for_status()
+    latency = time.perf_counter() - start
+    data = response.json()
+    meta = data.get("meta_info") or {}
+    text = data.get("text") or data.get("output") or ""
+    return ResponseStats(
+        text=text,
+        prompt_tokens=int(meta.get("prompt_tokens") or 0),
+        completion_tokens=int(meta.get("completion_tokens") or len(data.get("output_ids") or [])),
+        ttft_s=float(meta.get("ttft") or meta.get("time_to_first_token") or latency),
+        latency_s=float(meta.get("e2e_latency") or latency),
     )
 
 
-async def generate_once(
+async def generate_openai_completion(
     client: httpx.AsyncClient,
     base_url: str,
     model: str,
@@ -117,7 +154,7 @@ async def generate_once(
 ) -> ResponseStats:
     start = time.perf_counter()
     url = f"{base_url.rstrip('/')}/v1/completions"
-    payload = completion_payload(model, prompt, request_params, stream)
+    payload = openai_completion_payload(model, prompt, request_params, stream)
     if not stream:
         response = await client.post(url, json=payload, timeout=None)
         response.raise_for_status()
@@ -133,7 +170,7 @@ async def generate_once(
             latency_s=latency,
         )
 
-    first_token_time: Optional[float] = None
+    first_token_time: float | None = None
     text_parts: list[str] = []
     usage: dict[str, Any] = {}
     async with client.stream("POST", url, json=payload, timeout=None) as response:
@@ -166,6 +203,24 @@ async def generate_once(
     )
 
 
+async def generate_once(
+    client: httpx.AsyncClient,
+    backend: str,
+    base_url: str,
+    model: str,
+    prompt: str,
+    request_params: dict[str, Any],
+    stream: bool,
+) -> ResponseStats:
+    if backend == "sglang-native":
+        return await generate_sglang_native(client, base_url, prompt, request_params)
+    if backend == "openai-completions":
+        return await generate_openai_completion(
+            client, base_url, model, prompt, request_params, stream
+        )
+    raise AssertionError(f"unsupported backend: {backend}")
+
+
 async def bounded_gather(coros: list[Any], concurrency: int) -> list[Any]:
     sem = asyncio.Semaphore(concurrency)
 
@@ -178,6 +233,7 @@ async def bounded_gather(coros: list[Any], concurrency: int) -> list[Any]:
 
 async def determinism_test(
     client: httpx.AsyncClient,
+    backend: str,
     base_url: str,
     model: str,
     request_params: dict[str, Any],
@@ -186,12 +242,7 @@ async def determinism_test(
 ) -> dict[str, Any]:
     results: dict[str, Any] = {"same_prompt": [], "order": []}
     baseline = await generate_once(
-        client,
-        base_url,
-        model,
-        DETERMINISM_PROMPT,
-        request_params,
-        stream=False,
+        client, backend, base_url, model, DETERMINISM_PROMPT, request_params, stream=False
     )
     baseline_text = baseline.text
 
@@ -201,6 +252,7 @@ async def determinism_test(
                 [
                     generate_once(
                         client,
+                        backend,
                         base_url,
                         model,
                         DETERMINISM_PROMPT,
@@ -229,14 +281,14 @@ async def determinism_test(
 
     forward = await bounded_gather(
         [
-            generate_once(client, base_url, model, prompt, request_params, stream=False)
+            generate_once(client, backend, base_url, model, prompt, request_params, stream=False)
             for prompt in ORDER_PROMPTS
         ],
         len(ORDER_PROMPTS),
     )
     reverse = await bounded_gather(
         [
-            generate_once(client, base_url, model, prompt, request_params, stream=False)
+            generate_once(client, backend, base_url, model, prompt, request_params, stream=False)
             for prompt in reversed(ORDER_PROMPTS)
         ],
         len(ORDER_PROMPTS),
@@ -261,6 +313,7 @@ async def determinism_test(
 
 async def benchmark(
     client: httpx.AsyncClient,
+    backend: str,
     base_url: str,
     model: str,
     request_params: dict[str, Any],
@@ -271,10 +324,19 @@ async def benchmark(
     for concurrency in concurrencies:
         request_count = max(min_requests, concurrency)
         prompts = [build_benchmark_prompt(i) for i in range(request_count)]
+        stream = backend == "openai-completions"
         start = time.perf_counter()
         responses = await bounded_gather(
             [
-                generate_once(client, base_url, model, prompt, request_params, stream=True)
+                generate_once(
+                    client,
+                    backend,
+                    base_url,
+                    model,
+                    prompt,
+                    request_params,
+                    stream=stream,
+                )
                 for prompt in prompts
             ],
             concurrency,
@@ -348,29 +410,49 @@ def print_markdown_table(rows: list[dict[str, Any]]) -> None:
         )
 
 
+def default_request_params(backend: str) -> dict[str, Any]:
+    if backend == "sglang-native":
+        return dict(DEFAULT_SGLANG_REQUEST_PARAMS)
+    if backend == "openai-completions":
+        return dict(DEFAULT_VLLM_REQUEST_PARAMS)
+    raise AssertionError(f"unsupported backend: {backend}")
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate deterministic vLLM completions and benchmark throughput."
+        description=(
+            "Validate batch-invariant deterministic inference and benchmark "
+            "8x B200 DeepSeek-V4-Pro throughput."
+        )
     )
-    parser.add_argument("--base-url", default="http://127.0.0.1:8000")
+    parser.add_argument(
+        "--backend",
+        choices=["sglang-native", "openai-completions"],
+        default="sglang-native",
+        help="Use sglang-native for SGLang /generate, openai-completions for vLLM.",
+    )
+    parser.add_argument("--base-url", default="http://127.0.0.1:30000")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--api-key", default=os.getenv("OPENAI_API_KEY"))
-    parser.add_argument("--hardware-label", default="B300")
+    parser.add_argument("--hardware-label", default="8xB200")
+    parser.add_argument("--request-params-json", default=None)
     parser.add_argument("--skip-determinism", action="store_true")
     parser.add_argument("--skip-benchmark", action="store_true")
     parser.add_argument("--determinism-repeats", type=int, default=3)
-    parser.add_argument("--min-requests", type=int, default=300)
-    parser.add_argument("--min-output-tok-s", type=float, default=1000)
+    parser.add_argument("--min-requests", type=int, default=256)
+    parser.add_argument("--target-output-tok-s", type=float, default=5000)
+    parser.add_argument("--misconfig-output-tok-s", type=float, default=2500)
+    parser.add_argument("--stretch-output-tok-s", type=float, default=8000)
     parser.add_argument(
         "--concurrencies",
         type=parse_int_csv,
-        default=parse_int_csv("1,4,8,16,32,64,128,256,300"),
+        default=parse_int_csv("1,4,8,16,32,64,128,256"),
         help="Comma-separated benchmark concurrency levels.",
     )
     parser.add_argument(
         "--determinism-concurrencies",
         type=parse_int_csv,
-        default=parse_int_csv("1,8,32,128,300"),
+        default=parse_int_csv("1,8,32,128"),
         help="Comma-separated determinism concurrency levels.",
     )
     args = parser.parse_args()
@@ -379,13 +461,25 @@ async def main() -> int:
     if args.min_requests <= 0:
         parser.error("--min-requests must be positive")
 
-    request_params = dict(DEFAULT_REQUEST_PARAMS)
+    request_params = default_request_params(args.backend)
+    if args.request_params_json:
+        request_params = json.loads(args.request_params_json)
+
     output: dict[str, Any] = {
+        "backend": args.backend,
         "base_url": args.base_url,
         "hardware_label": args.hardware_label,
         "model": args.model,
         "request_params": request_params,
+        "targets": {
+            "misconfiguration_below_output_tok_s": args.misconfig_output_tok_s,
+            "pass_output_tok_s": args.target_output_tok_s,
+            "stretch_output_tok_s": args.stretch_output_tok_s,
+        },
     }
+
+    import httpx
+
     async with httpx.AsyncClient(
         headers=make_headers(args.api_key),
         timeout=None,
@@ -393,6 +487,7 @@ async def main() -> int:
         if not args.skip_determinism:
             output["determinism"] = await determinism_test(
                 client,
+                args.backend,
                 args.base_url,
                 args.model,
                 request_params,
@@ -402,6 +497,7 @@ async def main() -> int:
         if not args.skip_benchmark:
             output["benchmark"] = await benchmark(
                 client,
+                args.backend,
                 args.base_url,
                 args.model,
                 request_params,
@@ -414,14 +510,24 @@ async def main() -> int:
         print()
         print_markdown_table(output["benchmark"])
         best = max(output["benchmark"], key=lambda row: row["output_tok_s"])
-        if args.min_output_tok_s > 0 and best["output_tok_s"] < args.min_output_tok_s:
+        if best["output_tok_s"] < args.misconfig_output_tok_s:
             print(
                 "ERROR: best output throughput "
                 f'{best["output_tok_s"]:.1f} tok/s is below '
-                f"{args.min_output_tok_s:.1f} tok/s",
+                f"{args.misconfig_output_tok_s:.1f} tok/s; treat as misconfiguration.",
+                file=sys.stderr,
+            )
+            return 3
+        if best["output_tok_s"] < args.target_output_tok_s:
+            print(
+                "ERROR: best output throughput "
+                f'{best["output_tok_s"]:.1f} tok/s is below target '
+                f"{args.target_output_tok_s:.1f} tok/s.",
                 file=sys.stderr,
             )
             return 2
+        if best["output_tok_s"] >= args.stretch_output_tok_s:
+            print(f'STRETCH: reached {best["output_tok_s"]:.1f} output tok/s')
     return 0
 
 
