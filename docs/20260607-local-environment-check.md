@@ -38,6 +38,19 @@ sglang is not installed. Install requirements or your SGLang wheel first.
 
 bash scripts/serve_vllm_deepseek_v4_pro_8xb200.sh
 vllm is not installed. Install requirements or your vLLM wheel first.
+
+python3 scripts/tune_deepseek_v4_pro_8xb200.py --dry-run --engines sglang,vllm
+listed the SGLang-first and vLLM fallback tuning variants.
+
+python3 scripts/tune_deepseek_v4_pro_8xb200.py \
+  --engines sglang \
+  --variants sglang-fa3-mem090 \
+  --startup-timeout-s 2 \
+  --cooldown-s 0 \
+  --run-dir /tmp/deepseek-tune-negative-one
+recorded server_failed_to_start and wrote summary/server logs. The server log
+contains the expected local failure:
+sglang is not installed. Install requirements or your SGLang wheel first.
 ```
 
 No deterministic throughput proof can be produced on this local machine until

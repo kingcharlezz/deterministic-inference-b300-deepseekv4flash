@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -371,6 +372,10 @@ async def benchmark(
 
 
 def print_markdown_table(rows: list[dict[str, Any]]) -> None:
+    print(format_markdown_table(rows))
+
+
+def format_markdown_table(rows: list[dict[str, Any]]) -> str:
     headers = [
         "conc",
         "reqs",
@@ -385,10 +390,12 @@ def print_markdown_table(rows: list[dict[str, Any]]) -> None:
         "lat p95",
         "lat p99",
     ]
-    print("| " + " | ".join(headers) + " |")
-    print("|" + "|".join(["---"] * len(headers)) + "|")
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "|" + "|".join(["---"] * len(headers)) + "|",
+    ]
     for row in rows:
-        print(
+        lines.append(
             "| "
             + " | ".join(
                 [
@@ -408,6 +415,7 @@ def print_markdown_table(rows: list[dict[str, Any]]) -> None:
             )
             + " |"
         )
+    return "\n".join(lines)
 
 
 def default_request_params(backend: str) -> dict[str, Any]:
@@ -436,6 +444,12 @@ async def main() -> int:
     parser.add_argument("--api-key", default=os.getenv("OPENAI_API_KEY"))
     parser.add_argument("--hardware-label", default="8xB200")
     parser.add_argument("--request-params-json", default=None)
+    parser.add_argument("--json-output", default=None, help="Optional path for raw JSON results.")
+    parser.add_argument(
+        "--markdown-output",
+        default=None,
+        help="Optional path for the benchmark Markdown table.",
+    )
     parser.add_argument("--skip-determinism", action="store_true")
     parser.add_argument("--skip-benchmark", action="store_true")
     parser.add_argument("--determinism-repeats", type=int, default=3)
@@ -505,10 +519,17 @@ async def main() -> int:
                 args.min_requests,
             )
 
-    print(json.dumps(output, indent=2))
+    output_json = json.dumps(output, indent=2)
+    if args.json_output:
+        Path(args.json_output).write_text(output_json + "\n", encoding="utf-8")
+
+    print(output_json)
     if "benchmark" in output:
         print()
-        print_markdown_table(output["benchmark"])
+        markdown_table = format_markdown_table(output["benchmark"])
+        if args.markdown_output:
+            Path(args.markdown_output).write_text(markdown_table + "\n", encoding="utf-8")
+        print(markdown_table)
         best = max(output["benchmark"], key=lambda row: row["output_tok_s"])
         if best["output_tok_s"] < args.misconfig_output_tok_s:
             print(

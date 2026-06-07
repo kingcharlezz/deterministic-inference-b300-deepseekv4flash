@@ -20,6 +20,9 @@ batch size, request order, concurrency, and repeated runs.
   `VLLM_BATCH_INVARIANT=1`.
 - `benchmark/bench_deterministic_inference.py`: backend-aware deterministic
   correctness and throughput probe.
+- `scripts/tune_deepseek_v4_pro_8xb200.py`: host-side tuning loop that tries
+  deterministic SGLang variants first, then vLLM fallback variants, recording
+  server logs, benchmark JSON, and Markdown tables under `runs/`.
 - `docs/20260607-8xb200-deepseek-v4-pro-deterministic-inference.md`: runbook,
   tuning ladder, and acceptance criteria.
 - `patches/vllm-0.22.1-batch-invariant.patch`: historical patch from the
@@ -106,6 +109,15 @@ python benchmark/bench_deterministic_inference.py \
   --hardware-label 8xB200
 ```
 
+To run the SGLang tuning ladder automatically on the target host:
+
+```bash
+python scripts/tune_deepseek_v4_pro_8xb200.py --engines sglang
+```
+
+Use `--variants 'sglang-fa3-*'` or an exact variant name to rerun a focused
+subset after inspecting logs.
+
 ## vLLM Fallback
 
 If SGLang cannot load or cannot stay deterministic at target throughput:
@@ -144,6 +156,17 @@ python benchmark/bench_deterministic_inference.py \
   --model deepseek-ai/DeepSeek-V4-Pro \
   --hardware-label 8xB200
 ```
+
+To try SGLang first and continue into vLLM fallback variants until one reaches
+the deterministic throughput gate:
+
+```bash
+python scripts/tune_deepseek_v4_pro_8xb200.py --engines sglang,vllm
+```
+
+Each attempt writes `server.log`, `benchmark.log`, `result.json`, and
+`benchmark.md` under `runs/<timestamp>/<variant>/`. The runner exits `0` on
+the first deterministic result at or above 5,000 output tok/s.
 
 ## Acceptance Criteria
 

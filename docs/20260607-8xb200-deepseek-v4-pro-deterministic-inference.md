@@ -181,6 +181,47 @@ The command exits with:
 - non-zero assertion/HTTP errors when exact deterministic comparison fails or
   the endpoint crashes.
 
+## Automated Tuning Runner
+
+On the target 8x B200 host, use the runner to execute the documented ladder and
+keep an audit trail:
+
+```bash
+python scripts/tune_deepseek_v4_pro_8xb200.py --engines sglang,vllm
+```
+
+To rerun one configuration or a focused subset:
+
+```bash
+python scripts/tune_deepseek_v4_pro_8xb200.py \
+  --engines sglang \
+  --variants 'sglang-fa3-*'
+```
+
+The SGLang sequence tries:
+
+- `fa3`, `flashinfer`, and `triton` at `--tp 8` and memory fraction `0.90`;
+- radix cache disabled when needed;
+- Triton split tile sizes `64`, `128`, and `256`;
+- chunked prefill `4096` with memory fraction `0.86`.
+
+The vLLM fallback sequence keeps `VLLM_BATCH_INVARIANT=1`, TP=8, seed `0`, and
+`VLLM_ENABLE_V1_MULTIPROCESSING=0`, then varies batch size, batched tokens, and
+GPU memory utilization.
+
+Every attempt writes:
+
+- `server.log`;
+- `benchmark.log`;
+- `result.json`;
+- `benchmark.md`;
+- top-level `summary.json` and `summary.md`.
+
+The runner stops at the first deterministic benchmark that exits `0`, which
+means best aggregate output throughput is at least 5,000 tok/s. If all variants
+fail, inspect the per-variant logs in order; a result below 2,500 output tok/s
+should be treated as misconfiguration rather than a tuned result.
+
 ## Result Template
 
 Record each run with:
