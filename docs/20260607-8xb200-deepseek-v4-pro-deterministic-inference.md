@@ -37,6 +37,7 @@ Local harness checks that do not require GPUs:
 python -m unittest discover -s tests
 python -m py_compile benchmark/bench_deterministic_inference.py \
   scripts/tune_deepseek_v4_pro_8xb200.py \
+  scripts/summarize_deepseek_v4_pro_run.py \
   tests/test_benchmark_harness.py
 ```
 
@@ -231,6 +232,19 @@ means best aggregate output throughput is at least 5,000 tok/s. If all variants
 fail, inspect the per-variant logs in order; a result below 2,500 output tok/s
 should be treated as misconfiguration rather than a tuned result.
 
+Generate and validate the final proof report after a passing run:
+
+```bash
+python scripts/summarize_deepseek_v4_pro_run.py runs/<timestamp>
+```
+
+The summary script reads `summary.json`, the passing variant's `result.json`,
+`benchmark.md`, and `environment.json`. It writes `final_report.md` and exits
+`0` only when exact determinism checks passed, the model is
+`deepseek-ai/DeepSeek-V4-Pro`, the hardware label is `8xB200`, the environment
+snapshot contains exactly eight B200 GPU rows, package versions are recorded,
+and best output throughput is at least 5,000 tok/s.
+
 ## Result Template
 
 Record each run with:
@@ -247,5 +261,6 @@ determinism order:
 best concurrency:
 best output tok/s:
 benchmark table:
+proof report:
 notes:
 ```

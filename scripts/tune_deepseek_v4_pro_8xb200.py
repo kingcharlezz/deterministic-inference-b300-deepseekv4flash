@@ -142,6 +142,48 @@ def best_output_tok_s(result_path: Path) -> float:
     return max(float(row.get("output_tok_s") or 0.0) for row in rows)
 
 
+def run_capture(cmd: list[str], timeout_s: float = 60) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=REPO_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout_s,
+        )
+        return {
+            "command": cmd,
+            "exit_code": proc.returncode,
+            "output": proc.stdout,
+        }
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "command": cmd,
+            "exit_code": None,
+            "output": str(exc),
+        }
+
+
+def write_environment_snapshot(run_dir: Path, python: str) -> None:
+    snapshot = {
+        "created_at_unix_s": time.time(),
+        "python_version": run_capture([python, "--version"]),
+        "gpu": run_capture(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,name,driver_version,memory.total",
+                "--format=csv",
+            ]
+        ),
+        "packages": run_capture([python, "-m", "pip", "freeze"]),
+    }
+    (run_dir / "environment.json").write_text(
+        json.dumps(snapshot, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def run_variant(variant: Variant, args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
     variant_dir = run_dir / variant.name
     variant_dir.mkdir(parents=True, exist_ok=True)
@@ -297,6 +339,8 @@ def main() -> int:
     if args.dry_run:
         print(json.dumps([{"name": item.name, "engine": item.engine, "env": item.env} for item in variants], indent=2))
         return 0
+
+    write_environment_snapshot(run_dir, args.python)
 
     attempts: list[dict[str, Any]] = []
     for variant in variants:

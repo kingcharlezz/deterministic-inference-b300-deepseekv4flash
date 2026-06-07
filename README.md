@@ -23,6 +23,9 @@ batch size, request order, concurrency, and repeated runs.
 - `scripts/tune_deepseek_v4_pro_8xb200.py`: host-side tuning loop that tries
   deterministic SGLang variants first, then vLLM fallback variants, recording
   server logs, benchmark JSON, and Markdown tables under `runs/`.
+- `scripts/summarize_deepseek_v4_pro_run.py`: validates a completed run
+  directory and writes the final proof report with launch command, versions,
+  GPU, determinism rows, benchmark table, and throughput verdict.
 - `tests/test_benchmark_harness.py`: local tests for exact-output comparison,
   mismatch detection, metric aggregation, and benchmark table formatting.
 - `docs/20260607-8xb200-deepseek-v4-pro-deterministic-inference.md`: runbook,
@@ -175,6 +178,16 @@ python scripts/tune_deepseek_v4_pro_8xb200.py --engines sglang,vllm
 Each attempt writes `server.log`, `benchmark.log`, `result.json`, and
 `benchmark.md` under `runs/<timestamp>/<variant>/`. The runner exits `0` on
 the first deterministic result at or above 5,000 output tok/s.
+
+After a passing run, generate the final proof report:
+
+```bash
+python scripts/summarize_deepseek_v4_pro_run.py runs/<timestamp>
+```
+
+This writes `runs/<timestamp>/final_report.md` and exits non-zero if the result
+does not prove deterministic DeepSeek-V4-Pro inference on `8xB200` at or above
+5,000 aggregate output tok/s.
 
 ## Acceptance Criteria
 

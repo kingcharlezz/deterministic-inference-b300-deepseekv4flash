@@ -38,8 +38,12 @@ python3 -m unittest discover -s tests
 
 python3 -m py_compile benchmark/bench_deterministic_inference.py \
   scripts/tune_deepseek_v4_pro_8xb200.py \
+  scripts/summarize_deepseek_v4_pro_run.py \
   tests/test_benchmark_harness.py
 completed without syntax errors.
+
+python3 scripts/summarize_deepseek_v4_pro_run.py --help
+displayed the final proof report CLI.
 
 bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
 sglang is not installed. Install requirements or your SGLang wheel first.
