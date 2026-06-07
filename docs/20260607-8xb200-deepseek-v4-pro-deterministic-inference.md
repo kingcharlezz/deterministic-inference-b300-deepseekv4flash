@@ -31,6 +31,15 @@ Package versions checked against PyPI on 2026-06-07:
 Install only one engine stack per virtual environment unless the target host
 image has already validated that the SGLang and vLLM dependency sets coexist.
 
+Local harness checks that do not require GPUs:
+
+```bash
+python -m unittest discover -s tests
+python -m py_compile benchmark/bench_deterministic_inference.py \
+  scripts/tune_deepseek_v4_pro_8xb200.py \
+  tests/test_benchmark_harness.py
+```
+
 ## Determinism Requirements
 
 The client request shape must be deterministic, but that is not sufficient.

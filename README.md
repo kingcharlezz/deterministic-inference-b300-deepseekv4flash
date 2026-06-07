@@ -23,6 +23,8 @@ batch size, request order, concurrency, and repeated runs.
 - `scripts/tune_deepseek_v4_pro_8xb200.py`: host-side tuning loop that tries
   deterministic SGLang variants first, then vLLM fallback variants, recording
   server logs, benchmark JSON, and Markdown tables under `runs/`.
+- `tests/test_benchmark_harness.py`: local tests for exact-output comparison,
+  mismatch detection, metric aggregation, and benchmark table formatting.
 - `docs/20260607-8xb200-deepseek-v4-pro-deterministic-inference.md`: runbook,
   tuning ladder, and acceptance criteria.
 - `patches/vllm-0.22.1-batch-invariant.patch`: historical patch from the
@@ -47,6 +49,12 @@ python -m pip install -r requirements-sglang.txt
 Use `requirements-vllm.txt` instead when validating the vLLM fallback in a
 separate environment. Avoid installing both engines into the same environment
 unless the target host image is known to support that combination.
+
+Run local benchmark-harness tests before launching on the GPU host:
+
+```bash
+python -m unittest discover -s tests
+```
 
 If the model requires Hugging Face auth in your environment:
 

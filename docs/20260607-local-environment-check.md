@@ -33,6 +33,14 @@ Fast local validation completed:
 ```text
 python3 -m py_compile benchmark/bench_deterministic_inference.py
 python3 benchmark/bench_deterministic_inference.py --help
+python3 -m unittest discover -s tests
+4 benchmark harness tests passed.
+
+python3 -m py_compile benchmark/bench_deterministic_inference.py \
+  scripts/tune_deepseek_v4_pro_8xb200.py \
+  tests/test_benchmark_harness.py
+completed without syntax errors.
+
 bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
 sglang is not installed. Install requirements or your SGLang wheel first.
 
