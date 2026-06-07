@@ -18,6 +18,9 @@ batch size, request order, concurrency, and repeated runs.
   command for 8x B200 with deterministic inference enabled.
 - `scripts/serve_vllm_deepseek_v4_pro_8xb200.sh`: vLLM fallback with
   `VLLM_BATCH_INVARIANT=1`.
+- `scripts/preflight_8xb200_deepseek_v4_pro.py`: target-host checks for
+  exactly 8 visible B200 GPUs, package presence, and required deterministic
+  engine flags in SGLang/vLLM help output.
 - `benchmark/bench_deterministic_inference.py`: backend-aware deterministic
   correctness and throughput probe.
 - `scripts/tune_deepseek_v4_pro_8xb200.py`: host-side tuning loop that tries
@@ -64,6 +67,13 @@ If the model requires Hugging Face auth in your environment:
 ```bash
 export HF_TOKEN=hf_...
 export HF_HOME="$PWD/hf-cache"
+```
+
+Before launching a long model load, verify the target host and installed engine:
+
+```bash
+python scripts/preflight_8xb200_deepseek_v4_pro.py --engine sglang
+VLLM_BATCH_INVARIANT=1 python scripts/preflight_8xb200_deepseek_v4_pro.py --engine vllm
 ```
 
 ## SGLang Primary

@@ -36,10 +36,22 @@ Local harness checks that do not require GPUs:
 ```bash
 python -m unittest discover -s tests
 python -m py_compile benchmark/bench_deterministic_inference.py \
+  scripts/preflight_8xb200_deepseek_v4_pro.py \
   scripts/tune_deepseek_v4_pro_8xb200.py \
   scripts/summarize_deepseek_v4_pro_run.py \
   tests/test_benchmark_harness.py
 ```
+
+Target-host preflight checks:
+
+```bash
+python scripts/preflight_8xb200_deepseek_v4_pro.py --engine sglang
+VLLM_BATCH_INVARIANT=1 python scripts/preflight_8xb200_deepseek_v4_pro.py --engine vllm
+```
+
+The preflight exits non-zero if `nvidia-smi` does not show exactly 8 B200 GPUs,
+the engine package is missing, the deterministic SGLang flag is absent, required
+vLLM serve flags are absent, or `VLLM_BATCH_INVARIANT=1` is missing for vLLM.
 
 ## Determinism Requirements
 

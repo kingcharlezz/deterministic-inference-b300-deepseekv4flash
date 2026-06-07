@@ -34,13 +34,22 @@ Fast local validation completed:
 python3 -m py_compile benchmark/bench_deterministic_inference.py
 python3 benchmark/bench_deterministic_inference.py --help
 python3 -m unittest discover -s tests
-4 benchmark harness tests passed.
+10 harness/preflight/report tests passed.
 
 python3 -m py_compile benchmark/bench_deterministic_inference.py \
+  scripts/preflight_8xb200_deepseek_v4_pro.py \
   scripts/tune_deepseek_v4_pro_8xb200.py \
   scripts/summarize_deepseek_v4_pro_run.py \
-  tests/test_benchmark_harness.py
+  tests/test_benchmark_harness.py \
+  tests/test_run_summary.py \
+  tests/test_preflight.py
 completed without syntax errors.
+
+python3 scripts/preflight_8xb200_deepseek_v4_pro.py --engine sglang
+failed with structured JSON for missing NVIDIA driver and missing SGLang.
+
+VLLM_BATCH_INVARIANT=1 python3 scripts/preflight_8xb200_deepseek_v4_pro.py --engine vllm
+failed with structured JSON for missing NVIDIA driver and missing vLLM.
 
 python3 scripts/summarize_deepseek_v4_pro_run.py --help
 displayed the final proof report CLI.
