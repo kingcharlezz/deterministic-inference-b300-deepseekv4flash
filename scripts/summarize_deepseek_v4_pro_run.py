@@ -40,11 +40,14 @@ def best_row(result: dict[str, Any]) -> dict[str, Any]:
 def deterministic_passed(result: dict[str, Any]) -> bool:
     determinism = result.get("determinism") or {}
     same_prompt = determinism.get("same_prompt") or []
+    mixed_batch = determinism.get("mixed_batch") or []
     order = determinism.get("order") or []
     return (
         bool(same_prompt)
+        and bool(mixed_batch)
         and bool(order)
         and all(int(row.get("mismatches") or 0) == 0 for row in same_prompt)
+        and all(int(row.get("mismatches") or 0) == 0 for row in mixed_batch)
         and all(int(row.get("mismatches") or 0) == 0 for row in order)
     )
 
@@ -178,6 +181,7 @@ def build_report(run_dir: Path, target_output_tok_s: float) -> tuple[str, bool]:
     packages_ok = bool(packages)
     passed = deterministic_ok and target_ok and model_ok and hardware_ok and gpu_ok and packages_ok
     same_prompt = (result.get("determinism") or {}).get("same_prompt") or []
+    mixed_batch = (result.get("determinism") or {}).get("mixed_batch") or []
     order = (result.get("determinism") or {}).get("order") or []
 
     lines = [
@@ -213,6 +217,8 @@ def build_report(run_dir: Path, target_output_tok_s: float) -> tuple[str, bool]:
         "",
         f"same-prompt rows: `{len(same_prompt)}`",
         f"same-prompt mismatches: `{sum(int(row.get('mismatches') or 0) for row in same_prompt)}`",
+        f"mixed-batch rows: `{len(mixed_batch)}`",
+        f"mixed-batch mismatches: `{sum(int(row.get('mismatches') or 0) for row in mixed_batch)}`",
         f"order rows: `{len(order)}`",
         f"order mismatches: `{sum(int(row.get('mismatches') or 0) for row in order)}`",
         "",

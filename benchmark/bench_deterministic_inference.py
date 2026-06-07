@@ -242,7 +242,7 @@ async def determinism_test(
     concurrencies: list[int],
     order_checks: bool,
 ) -> dict[str, Any]:
-    results: dict[str, Any] = {"same_prompt": [], "order": []}
+    results: dict[str, Any] = {"same_prompt": [], "mixed_batch": [], "order": []}
     baseline = await generate_once(
         client, backend, base_url, model, DETERMINISM_PROMPT, request_params, stream=False
     )
@@ -284,6 +284,40 @@ async def determinism_test(
     if not order_checks:
         return results
 
+    individual_baselines: dict[str, str] = {}
+    for prompt in ORDER_PROMPTS:
+        response = await generate_once(
+            client, backend, base_url, model, prompt, request_params, stream=False
+        )
+        individual_baselines[prompt] = response.text
+
+    for concurrency in concurrencies:
+        prompts = [ORDER_PROMPTS[index % len(ORDER_PROMPTS)] for index in range(concurrency)]
+        responses = await bounded_gather(
+            [
+                generate_once(client, backend, base_url, model, prompt, request_params, stream=False)
+                for prompt in prompts
+            ],
+            concurrency,
+        )
+        mismatches = sum(
+            response.text != individual_baselines[prompt]
+            for prompt, response in zip(prompts, responses)
+        )
+        results["mixed_batch"].append(
+            {
+                "concurrency": concurrency,
+                "requests": concurrency,
+                "unique_prompts": len(ORDER_PROMPTS),
+                "mismatches": mismatches,
+            }
+        )
+        if mismatches:
+            raise AssertionError(
+                "mixed-prompt batch invariance failed at "
+                f"concurrency={concurrency}, mismatches={mismatches}"
+            )
+
     forward = await bounded_gather(
         [
             generate_once(client, backend, base_url, model, prompt, request_params, stream=False)
@@ -302,7 +336,10 @@ async def determinism_test(
     order_mismatches = [
         prompt
         for prompt, response in zip(ORDER_PROMPTS, forward)
-        if response.text != reverse_by_prompt[prompt].text
+        if (
+            response.text != individual_baselines[prompt]
+            or reverse_by_prompt[prompt].text != individual_baselines[prompt]
+        )
     ]
     results["order"].append(
         {

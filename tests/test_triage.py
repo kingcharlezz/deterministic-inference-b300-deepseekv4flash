@@ -77,6 +77,7 @@ class TriageTests(unittest.TestCase):
                 },
                 "determinism": {
                     "same_prompt": [{"mismatches": 1}],
+                    "mixed_batch": [{"mismatches": 1}],
                     "order": [{"mismatches": 0}],
                 },
                 "benchmark": [{"output_tok_s": 1200.0}],

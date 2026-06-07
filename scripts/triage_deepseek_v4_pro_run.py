@@ -159,8 +159,12 @@ def scan_result_json(path: Path, issues: list[dict[str, Any]]) -> None:
         return
     determinism = data.get("determinism") or {}
     same_prompt = determinism.get("same_prompt") or []
+    mixed_batch = determinism.get("mixed_batch") or []
     order = determinism.get("order") or []
-    mismatches = sum(int(row.get("mismatches") or 0) for row in same_prompt + order)
+    mismatches = sum(
+        int(row.get("mismatches") or 0)
+        for row in same_prompt + mixed_batch + order
+    )
     if mismatches:
         add_issue(
             issues,

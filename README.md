@@ -225,7 +225,8 @@ does not prove deterministic DeepSeek-V4-Pro inference on `8xB200` at or above
 ## Acceptance Criteria
 
 The benchmark repeats same-prompt checks at concurrency `1,8,32,128`, repeats
-each level 3 times, verifies prompt order invariance, then benchmarks
+each level 3 times, verifies mixed-prompt batch-size invariance at the same
+determinism concurrencies, verifies prompt order invariance, then benchmarks
 concurrency `1,4,8,16,32,64,128,256`.
 
 It reports output tok/s, prompt tok/s, total tok/s, req/s, TTFT p50/p95/p99,

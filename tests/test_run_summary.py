@@ -86,6 +86,10 @@ class RunSummaryTests(unittest.TestCase):
                         {"concurrency": 1, "repeat": 1, "requests": 1, "mismatches": 0},
                         {"concurrency": 8, "repeat": 1, "requests": 8, "mismatches": 0},
                     ],
+                    "mixed_batch": [
+                        {"concurrency": 1, "requests": 1, "unique_prompts": 8, "mismatches": 0},
+                        {"concurrency": 8, "requests": 8, "unique_prompts": 8, "mismatches": 0},
+                    ],
                     "order": [{"requests": 16, "orders": ["forward", "reverse"], "mismatches": 0}],
                 },
                 "benchmark": [
@@ -121,6 +125,7 @@ class RunSummaryTests(unittest.TestCase):
         self.assertIn("--enable-deterministic-inference", report)
         self.assertIn("sglang==0.5.12.post1", report)
         self.assertIn("NVIDIA B200", report)
+        self.assertIn("mixed-batch mismatches: `0`", report)
         self.assertIn("environment has 8 B200 GPUs: `True`", report)
 
     def test_build_report_rejects_below_target_result(self) -> None:
@@ -129,6 +134,18 @@ class RunSummaryTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("best output tok/s: `4999.9`", report)
         self.assertIn("proof >= target: `False`", report)
+
+    def test_deterministic_passed_requires_mixed_batch_rows(self) -> None:
+        self.assertFalse(
+            summary.deterministic_passed(
+                {
+                    "determinism": {
+                        "same_prompt": [{"mismatches": 0}],
+                        "order": [{"mismatches": 0}],
+                    }
+                }
+            )
+        )
 
 
 if __name__ == "__main__":

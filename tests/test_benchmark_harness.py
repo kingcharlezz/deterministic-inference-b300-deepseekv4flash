@@ -48,6 +48,8 @@ class BenchmarkHarnessTests(unittest.TestCase):
 
         self.assertEqual(len(result["same_prompt"]), 4)
         self.assertTrue(all(row["mismatches"] == 0 for row in result["same_prompt"]))
+        self.assertEqual(len(result["mixed_batch"]), 2)
+        self.assertTrue(all(row["mismatches"] == 0 for row in result["mixed_batch"]))
         self.assertEqual(result["order"][0]["mismatches"], 0)
 
     def test_determinism_fails_on_same_prompt_text_mismatch(self) -> None:
@@ -84,6 +86,45 @@ class BenchmarkHarnessTests(unittest.TestCase):
                         request_params=bench.DEFAULT_SGLANG_REQUEST_PARAMS,
                         repeats=1,
                         concurrencies=[2],
+                        order_checks=True,
+                    )
+                )
+
+    def test_determinism_fails_on_mixed_prompt_batch_mismatch(self) -> None:
+        calls_by_prompt: dict[str, int] = {}
+
+        async def fake_generate_once(
+            client,
+            backend,
+            base_url,
+            model,
+            prompt,
+            request_params,
+            stream,
+        ):
+            calls_by_prompt[prompt] = calls_by_prompt.get(prompt, 0) + 1
+            text = f"stable::{prompt}"
+            if prompt == bench.ORDER_PROMPTS[0] and calls_by_prompt[prompt] > 1:
+                text = f"changed::{prompt}"
+            return bench.ResponseStats(
+                text=text,
+                prompt_tokens=11,
+                completion_tokens=256,
+                ttft_s=0.01,
+                latency_s=0.02,
+            )
+
+        with patch.object(bench, "generate_once", fake_generate_once):
+            with self.assertRaisesRegex(AssertionError, "mixed-prompt batch invariance failed"):
+                asyncio.run(
+                    bench.determinism_test(
+                        client=object(),
+                        backend="sglang-native",
+                        base_url="http://test",
+                        model=bench.DEFAULT_MODEL,
+                        request_params=bench.DEFAULT_SGLANG_REQUEST_PARAMS,
+                        repeats=1,
+                        concurrencies=[1],
                         order_checks=True,
                     )
                 )

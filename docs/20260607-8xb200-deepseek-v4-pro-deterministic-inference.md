@@ -194,6 +194,7 @@ The probe performs:
 - concurrency `1,8,32,128`;
 - 3 repeats per determinism concurrency;
 - exact text comparison;
+- mixed-prompt batch-size invariance at each determinism concurrency;
 - forward vs reverse order invariance;
 - throughput benchmark at concurrency `1,4,8,16,32,64,128,256`.
 
@@ -295,6 +296,7 @@ request params:
 package versions:
 GPU:
 determinism same-prompt:
+determinism mixed-batch:
 determinism order:
 best concurrency:
 best output tok/s:
