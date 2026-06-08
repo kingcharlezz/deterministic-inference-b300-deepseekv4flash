@@ -1,12 +1,14 @@
-# deterministic-inference-8xb200-deepseek-v4-pro
+# deterministic-inference-8xb200-deepseek-v4-flash
 
 Deterministic high-throughput inference harness for
-`deepseek-ai/DeepSeek-V4-Pro` on 8x NVIDIA B200.
+`deepseek-ai/DeepSeek-V4-Flash` on 8x NVIDIA B200.
 
 This repository started from an older 1x B300 DeepSeek V4 Flash vLLM setup.
 Treat those artifacts only as prior debugging notes. The current target is
-8x B200, tensor parallel size 8, DeepSeek-V4-Pro, deterministic engine-level
-batch-invariant execution, and at least 5,000 aggregate output tok/s.
+8x B200 aggregate serving, DeepSeek-V4-Flash, deterministic engine-level
+batch-invariant execution, and at least 5,000 aggregate output tok/s. The
+original TP=8 shape is still tested, but current Flash-specific guidance also
+requires testing TP=4 with DP=2 across the 8 GPUs.
 
 `temperature=0` is not enough. The server must use deterministic or
 batch-invariant execution, and the benchmark checks exact text equality across
@@ -14,31 +16,31 @@ batch size, request order, concurrency, and repeated runs.
 
 ## What Is Included
 
-- `scripts/serve_sglang_deepseek_v4_pro_8xb200.sh`: primary SGLang launch
+- `scripts/serve_sglang_deepseek_v4_flash_8xb200.sh`: primary SGLang launch
   command for 8x B200 with deterministic inference enabled.
-- `scripts/serve_vllm_deepseek_v4_pro_8xb200.sh`: vLLM fallback with
+- `scripts/serve_vllm_deepseek_v4_flash_8xb200.sh`: vLLM fallback with
   `VLLM_BATCH_INVARIANT=1`.
-- `scripts/preflight_8xb200_deepseek_v4_pro.py`: target-host checks for
+- `scripts/preflight_8xb200_deepseek_v4_flash.py`: target-host checks for
   exactly 8 visible B200 GPUs, package presence, and required deterministic
   engine flags in SGLang/vLLM help output.
-- `scripts/run_8xb200_deepseek_v4_pro_pipeline.py`: one-command target-host
+- `scripts/run_8xb200_deepseek_v4_flash_pipeline.py`: one-command target-host
   pipeline that preflights selected engines, tunes passing engines, and writes
   the final proof report.
-- `scripts/triage_deepseek_v4_pro_run.py`: scans run logs/results and writes
+- `scripts/triage_deepseek_v4_flash_run.py`: scans run logs/results and writes
   JSON/Markdown failure triage with concrete next actions.
 - `benchmark/bench_deterministic_inference.py`: backend-aware deterministic
   correctness and throughput probe.
-- `scripts/tune_deepseek_v4_pro_8xb200.py`: host-side tuning loop that tries
+- `scripts/tune_deepseek_v4_flash_8xb200.py`: host-side tuning loop that tries
   deterministic SGLang variants first, then vLLM fallback variants, recording
   server logs, benchmark JSON, and Markdown tables under `runs/`.
-- `scripts/summarize_deepseek_v4_pro_run.py`: validates a completed run
+- `scripts/summarize_deepseek_v4_flash_run.py`: validates a completed run
   directory and writes the final proof report with launch command, versions,
   GPU, determinism rows, benchmark table, and throughput verdict.
 - `tests/test_benchmark_harness.py`: local tests for exact-output comparison,
   mismatch detection, metric aggregation, and benchmark table formatting.
 - `tests/test_benchmark_cli_http.py`: local fake-server tests for the benchmark
   CLI against SGLang `/generate` and vLLM/OpenAI streaming completions.
-- `docs/20260607-8xb200-deepseek-v4-pro-deterministic-inference.md`: runbook,
+- `docs/20260608-8xb200-deepseek-v4-flash-deterministic-inference.md`: runbook,
   tuning ladder, and acceptance criteria.
 - `patches/vllm-0.22.1-batch-invariant.patch`: historical patch from the
   original repo; use only if pinned to that old vLLM build.
@@ -46,7 +48,7 @@ batch size, request order, concurrency, and repeated runs.
 ## Fresh Machine Setup
 
 These commands assume a Linux host with exactly 8 visible NVIDIA B200 GPUs, a
-working driver, internet access, Hugging Face access to DeepSeek-V4-Pro, and
+working driver, internet access, Hugging Face access to DeepSeek-V4-Flash, and
 Python 3.12.
 
 ```bash
@@ -79,34 +81,37 @@ export HF_HOME="$PWD/hf-cache"
 Before launching a long model load, verify the target host and installed engine:
 
 ```bash
-python scripts/preflight_8xb200_deepseek_v4_pro.py --engine sglang
-VLLM_BATCH_INVARIANT=1 python scripts/preflight_8xb200_deepseek_v4_pro.py --engine vllm
+python scripts/preflight_8xb200_deepseek_v4_flash.py --engine sglang
+VLLM_BATCH_INVARIANT=1 python scripts/preflight_8xb200_deepseek_v4_flash.py --engine vllm
 ```
 
 To run preflight, tuning, and final report generation as one target-host flow:
 
 ```bash
-python scripts/run_8xb200_deepseek_v4_pro_pipeline.py --engines sglang,vllm
+python scripts/run_8xb200_deepseek_v4_flash_pipeline.py --engines sglang,vllm
 ```
 
 ## SGLang Primary
 
-Start with FA3:
+Install the B200 DeepSeek-V4-Flash compatibility patch for SGLang, then start
+with the DeepSeek V4 attention backend:
 
 ```bash
 source .venv/bin/activate
-bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+scripts/apply_sglang_b200_deepseek_v4_flash_patch.sh
+bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 ```
 
 That expands to:
 
 ```bash
 python -m sglang.launch_server \
-  --model-path deepseek-ai/DeepSeek-V4-Pro \
+  --model-path deepseek-ai/DeepSeek-V4-Flash \
   --host 0.0.0.0 \
   --port 30000 \
   --tp 8 \
-  --attention-backend fa3 \
+  --attention-backend dsv4 \
+  --moe-runner-backend flashinfer_mxfp4 \
   --enable-deterministic-inference \
   --mem-fraction-static 0.90
 ```
@@ -114,17 +119,22 @@ python -m sglang.launch_server \
 Try deterministic attention backends in this order when debugging:
 
 ```bash
-ATTENTION_BACKEND=fa3 bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
-ATTENTION_BACKEND=flashinfer bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
-ATTENTION_BACKEND=triton bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+MOE_RUNNER_BACKEND=flashinfer_mxfp4 ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+MOE_RUNNER_BACKEND=flashinfer_mxfp4 FLASHINFER_MXFP4_MOE_PRECISION=bf16 ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+TP=4 DP_SIZE=2 MOE_RUNNER_BACKEND=flashinfer_mxfp4 ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+TP=4 DP_SIZE=2 MOE_RUNNER_BACKEND= MOE_A2A_BACKEND=megamoe ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+MOE_RUNNER_BACKEND=marlin DISABLE_RADIX_CACHE=1 ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+MOE_RUNNER_BACKEND=flashinfer_trtllm_routed ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+ATTENTION_BACKEND=flashinfer bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+ATTENTION_BACKEND=triton bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 ```
 
 If exact output comparisons vary, keep deterministic inference enabled and test:
 
 ```bash
-DISABLE_RADIX_CACHE=1 bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
-TRITON_ATTENTION_SPLIT_TILE_SIZE=128 ATTENTION_BACKEND=triton bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
-CHUNKED_PREFILL_SIZE=4096 bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+DISABLE_RADIX_CACHE=1 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+TRITON_ATTENTION_SPLIT_TILE_SIZE=128 ATTENTION_BACKEND=triton bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+CHUNKED_PREFILL_SIZE=4096 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 ```
 
 SGLang benchmark requests use:
@@ -139,18 +149,28 @@ Run the probe:
 python benchmark/bench_deterministic_inference.py \
   --backend sglang-native \
   --base-url http://127.0.0.1:30000 \
-  --model deepseek-ai/DeepSeek-V4-Pro \
+  --model deepseek-ai/DeepSeek-V4-Flash \
   --hardware-label 8xB200
 ```
 
 To run the SGLang tuning ladder automatically on the target host:
 
 ```bash
-python scripts/tune_deepseek_v4_pro_8xb200.py --engines sglang
+python scripts/tune_deepseek_v4_flash_8xb200.py --engines sglang
 ```
 
 Use `--variants 'sglang-fa3-*'` or an exact variant name to rerun a focused
 subset after inspecting logs.
+
+Current local evidence says the missing piece is still the combined path:
+attention, MoE, checkpoint quantization, and parallelism must all be
+batch-invariant together. `dsv4 + flashinfer_mxfp4` and `dsv4 + marlin` can
+serve after local patches, but exact text still changes under concurrent
+batching. The `dsv4 + triton + QUANTIZATION=unquant` smoke test still follows
+the fp8 checkpoint path and crashed in fused MoE with `Hidden size mismatch`.
+The next candidates are `TP=4 DP_SIZE=2` and Blackwell MegaMoE, because current
+DeepSeek-V4-Flash serving guidance treats Flash as a 4-GPU B200 shape rather
+than the 8-GPU TP shape used for Pro.
 
 ## vLLM Fallback
 
@@ -158,13 +178,13 @@ If SGLang cannot load or cannot stay deterministic at target throughput:
 
 ```bash
 source .venv/bin/activate
-bash scripts/serve_vllm_deepseek_v4_pro_8xb200.sh
+bash scripts/serve_vllm_deepseek_v4_flash_8xb200.sh
 ```
 
 That expands to:
 
 ```bash
-VLLM_BATCH_INVARIANT=1 vllm serve deepseek-ai/DeepSeek-V4-Pro \
+VLLM_BATCH_INVARIANT=1 vllm serve deepseek-ai/DeepSeek-V4-Flash \
   --host 0.0.0.0 \
   --port 8000 \
   --seed 0 \
@@ -187,7 +207,7 @@ Run the fallback probe:
 python benchmark/bench_deterministic_inference.py \
   --backend openai-completions \
   --base-url http://127.0.0.1:8000 \
-  --model deepseek-ai/DeepSeek-V4-Pro \
+  --model deepseek-ai/DeepSeek-V4-Flash \
   --hardware-label 8xB200
 ```
 
@@ -195,7 +215,7 @@ To try SGLang first and continue into vLLM fallback variants until one reaches
 the deterministic throughput gate:
 
 ```bash
-python scripts/tune_deepseek_v4_pro_8xb200.py --engines sglang,vllm
+python scripts/tune_deepseek_v4_flash_8xb200.py --engines sglang,vllm
 ```
 
 The full pipeline wrapper runs this tuner after preflighting each selected
@@ -205,7 +225,7 @@ When a run fails, the full pipeline writes `triage.json` and `triage.md`
 automatically. You can also triage an existing run directory manually:
 
 ```bash
-python scripts/triage_deepseek_v4_pro_run.py runs/<timestamp>
+python scripts/triage_deepseek_v4_flash_run.py runs/<timestamp>
 ```
 
 Each attempt writes `server.log`, `benchmark.log`, `result.json`, and
@@ -215,11 +235,11 @@ the first deterministic result at or above 5,000 output tok/s.
 After a passing run, generate the final proof report:
 
 ```bash
-python scripts/summarize_deepseek_v4_pro_run.py runs/<timestamp>
+python scripts/summarize_deepseek_v4_flash_run.py runs/<timestamp>
 ```
 
 This writes `runs/<timestamp>/final_report.md` and exits non-zero if the result
-does not prove deterministic DeepSeek-V4-Pro inference on `8xB200` at or above
+does not prove deterministic DeepSeek-V4-Flash inference on `8xB200` at or above
 5,000 aggregate output tok/s.
 
 ## Acceptance Criteria

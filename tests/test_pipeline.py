@@ -13,7 +13,7 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import run_8xb200_deepseek_v4_pro_pipeline as pipeline  # noqa: E402
+import run_8xb200_deepseek_v4_flash_pipeline as pipeline  # noqa: E402
 
 
 class PipelineTests(unittest.TestCase):

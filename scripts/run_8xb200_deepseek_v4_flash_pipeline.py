@@ -14,6 +14,17 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def default_python_for_engine(engine: str) -> str:
+    env_name = "SGLANG_PYTHON" if engine == "sglang" else "VLLM_PYTHON"
+    if os.environ.get(env_name):
+        return os.environ[env_name]
+    venv_name = ".venv" if engine == "sglang" else ".venv-vllm"
+    candidate = REPO_ROOT / venv_name / "bin" / "python"
+    if candidate.exists():
+        return str(candidate)
+    return sys.executable
+
+
 def parse_engines(value: str) -> list[str]:
     engines = [item.strip() for item in value.split(",") if item.strip()]
     unknown = sorted(set(engines) - {"sglang", "vllm"})
@@ -51,7 +62,7 @@ def preflight_engine(engine: str, python: str, run_dir: Path) -> dict[str, Any]:
     env = {"VLLM_BATCH_INVARIANT": "1"} if engine == "vllm" else {}
     cmd = [
         python,
-        "scripts/preflight_8xb200_deepseek_v4_pro.py",
+        "scripts/preflight_8xb200_deepseek_v4_flash.py",
         "--engine",
         engine,
         "--python",
@@ -77,7 +88,7 @@ def run_triage(run_dir: Path, python: str) -> dict[str, Any]:
     return run_command(
         [
             python,
-            "scripts/triage_deepseek_v4_pro_run.py",
+            "scripts/triage_deepseek_v4_flash_run.py",
             str(run_dir),
             "--json-output",
             str(run_dir / "triage.json"),
@@ -91,13 +102,16 @@ def run_triage(run_dir: Path, python: str) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Preflight, tune, and summarize deterministic DeepSeek-V4-Pro "
+            "Preflight, tune, and summarize deterministic DeepSeek-V4-Flash "
             "inference on 8x B200."
         )
     )
     parser.add_argument("--engines", default="sglang,vllm")
     parser.add_argument("--run-dir", default=None)
-    parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--python", default=sys.executable, help="Fallback Python for local utilities.")
+    parser.add_argument("--sglang-python", default=default_python_for_engine("sglang"))
+    parser.add_argument("--vllm-python", default=default_python_for_engine("vllm"))
+    parser.add_argument("--benchmark-python", default=None)
     parser.add_argument("--variants", default=None)
     parser.add_argument("--startup-timeout-s", type=float, default=1800)
     parser.add_argument("--benchmark-timeout-s", type=float, default=3600)
@@ -130,7 +144,8 @@ def main() -> int:
     if not args.skip_preflight:
         selected: list[str] = []
         for engine in requested_engines:
-            result = preflight_engine(engine, args.python, run_dir)
+            engine_python = args.sglang_python if engine == "sglang" else args.vllm_python
+            result = preflight_engine(engine, engine_python, run_dir)
             state["preflight"].append(result)
             if result["ok"]:
                 selected.append(engine)
@@ -150,13 +165,17 @@ def main() -> int:
 
     tune_cmd = [
         args.python,
-        "scripts/tune_deepseek_v4_pro_8xb200.py",
+        "scripts/tune_deepseek_v4_flash_8xb200.py",
         "--engines",
         ",".join(state["selected_engines"]),
         "--run-dir",
         str(run_dir),
         "--python",
         args.python,
+        "--sglang-python",
+        args.sglang_python,
+        "--vllm-python",
+        args.vllm_python,
         "--startup-timeout-s",
         str(args.startup_timeout_s),
         "--benchmark-timeout-s",
@@ -176,6 +195,8 @@ def main() -> int:
         "--stretch-output-tok-s",
         str(args.stretch_output_tok_s),
     ]
+    if args.benchmark_python:
+        tune_cmd.extend(["--benchmark-python", args.benchmark_python])
     if args.variants:
         tune_cmd.extend(["--variants", args.variants])
     state["tune"] = run_command(tune_cmd, run_dir / "tune.log")
@@ -189,7 +210,7 @@ def main() -> int:
 
     summarize_cmd = [
         args.python,
-        "scripts/summarize_deepseek_v4_pro_run.py",
+        "scripts/summarize_deepseek_v4_flash_run.py",
         str(run_dir),
         "--target-output-tok-s",
         str(args.target_output_tok_s),

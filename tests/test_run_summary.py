@@ -10,7 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import summarize_deepseek_v4_pro_run as summary  # noqa: E402
+import summarize_deepseek_v4_flash_run as summary  # noqa: E402
 
 
 def write_json(path: Path, data: dict) -> None:
@@ -34,7 +34,7 @@ class RunSummaryTests(unittest.TestCase):
                         "best_output_tok_s": output_tok_s,
                         "result_json": str(result_path),
                         "env": {
-                            "MODEL": "deepseek-ai/DeepSeek-V4-Pro",
+                            "MODEL": "deepseek-ai/DeepSeek-V4-Flash",
                             "PORT": "30000",
                             "TP": "8",
                             "ATTENTION_BACKEND": "fa3",
@@ -71,7 +71,7 @@ class RunSummaryTests(unittest.TestCase):
                 "backend": "sglang-native",
                 "base_url": "http://127.0.0.1:30000",
                 "hardware_label": "8xB200",
-                "model": "deepseek-ai/DeepSeek-V4-Pro",
+                "model": "deepseek-ai/DeepSeek-V4-Flash",
                 "request_params": {
                     "temperature": 0,
                     "top_p": 1,

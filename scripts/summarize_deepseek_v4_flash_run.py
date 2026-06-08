@@ -8,7 +8,7 @@ from typing import Any
 
 
 DEFAULT_TARGET_OUTPUT_TOK_S = 5000.0
-DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
+DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -16,9 +16,19 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def package_lines(environment: dict[str, Any]) -> list[str]:
-    output = ((environment.get("packages") or {}).get("output") or "").splitlines()
+    outputs = [((environment.get("packages") or {}).get("output") or "")]
+    for item in (environment.get("packages_by_engine") or {}).values():
+        outputs.append((item or {}).get("output") or "")
     interesting = ("sglang", "vllm", "torch", "triton", "flashinfer", "flash-attn")
-    return [line for line in output if line.split("==", 1)[0].lower() in interesting]
+    lines: list[str] = []
+    seen: set[str] = set()
+    for output in outputs:
+        for line in output.splitlines():
+            name = line.split("==", 1)[0].split(" @ ", 1)[0].lower()
+            if name in interesting and line not in seen:
+                lines.append(line)
+                seen.add(line)
+    return lines
 
 
 def gpu_lines(environment: dict[str, Any]) -> list[str]:
@@ -185,7 +195,7 @@ def build_report(run_dir: Path, target_output_tok_s: float) -> tuple[str, bool]:
     order = (result.get("determinism") or {}).get("order") or []
 
     lines = [
-        "# DeepSeek-V4-Pro 8x B200 Deterministic Inference Proof",
+        "# DeepSeek-V4-Flash 8x B200 Deterministic Inference Proof",
         "",
         f"run_dir: `{run_dir}`",
         f"engine: `{attempt.get('engine')}`",
@@ -245,7 +255,7 @@ def build_report(run_dir: Path, target_output_tok_s: float) -> tuple[str, bool]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate and summarize a completed DeepSeek-V4-Pro 8x B200 tuning run."
+        description="Validate and summarize a completed DeepSeek-V4-Flash 8x B200 tuning run."
     )
     parser.add_argument("run_dir")
     parser.add_argument("--target-output-tok-s", type=float, default=DEFAULT_TARGET_OUTPUT_TOK_S)

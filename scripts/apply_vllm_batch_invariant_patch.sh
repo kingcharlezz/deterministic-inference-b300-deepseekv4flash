@@ -3,6 +3,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PATCH_FILE="$ROOT/patches/vllm-0.22.1-batch-invariant.patch"
+if [[ -z "${VLLM_PYTHON:-}" ]]; then
+  if [[ -x "$ROOT/.venv-vllm/bin/python" ]]; then
+    VLLM_PYTHON="$ROOT/.venv-vllm/bin/python"
+  else
+    VLLM_PYTHON="${PYTHON:-python3}"
+  fi
+fi
 
 if [[ ! -f "$PATCH_FILE" ]]; then
   echo "missing patch: $PATCH_FILE" >&2
@@ -10,7 +17,7 @@ if [[ ! -f "$PATCH_FILE" ]]; then
 fi
 
 SITE_PACKAGES="$(
-python - <<'PY'
+"$VLLM_PYTHON" - <<'PY'
 import site
 
 paths = site.getsitepackages()
@@ -20,18 +27,18 @@ print(paths[0])
 PY
 )"
 
-python - <<'PY'
+"$VLLM_PYTHON" - <<'PY'
 import importlib.metadata as md
 
 version = md.version("vllm")
-if version != "0.22.1":
-    raise SystemExit(f"expected vllm==0.22.1 before patching, found {version}")
+if not version.startswith("0.22.1"):
+    raise SystemExit(f"expected vllm 0.22.1* before patching, found {version}")
 print(f"patching vllm {version}")
 PY
 
 patch --forward --batch -p1 -d "$SITE_PACKAGES" < "$PATCH_FILE"
 
-python - <<'PY'
+"$VLLM_PYTHON" - <<'PY'
 import vllm.envs as envs
 
 assert hasattr(envs, "VLLM_BATCH_INVARIANT")

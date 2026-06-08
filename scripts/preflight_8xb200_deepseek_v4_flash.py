@@ -93,7 +93,11 @@ def check_sglang(python: str) -> dict[str, Any]:
 
 def check_vllm(python: str) -> dict[str, Any]:
     version = package_version("vllm")
-    command = ["vllm", "serve", "--help"] if shutil.which("vllm") else [python, "-m", "vllm.entrypoints.cli.main", "serve", "--help"]
+    command = (
+        ["vllm", "serve", "--help=all"]
+        if shutil.which("vllm")
+        else [python, "-m", "vllm.entrypoints.cli.main", "serve", "--help=all"]
+    )
     help_result = run_capture(command)
     missing_required = missing_flags(help_result["output"], REQUIRED_VLLM_FLAGS)
     batch_invariant = os.environ.get("VLLM_BATCH_INVARIANT") == "1"
@@ -119,7 +123,7 @@ def write_report(path: str | None, data: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Preflight 8x B200 DeepSeek-V4-Pro inference host.")
+    parser = argparse.ArgumentParser(description="Preflight 8x B200 DeepSeek-V4-Flash inference host.")
     parser.add_argument("--engine", choices=["sglang", "vllm", "both"], default="both")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--json-output", default=None)

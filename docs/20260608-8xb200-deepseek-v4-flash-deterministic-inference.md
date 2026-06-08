@@ -1,7 +1,7 @@
-# 8x B200 DeepSeek-V4-Pro Deterministic Inference
+# 8x B200 DeepSeek-V4-Flash Deterministic Inference
 
 This runbook is for deterministic high-throughput inference with
-`deepseek-ai/DeepSeek-V4-Pro` on 8x NVIDIA B200. The old 1x B300 DeepSeek V4
+`deepseek-ai/DeepSeek-V4-Flash` on 8x NVIDIA B200. The old 1x B300 DeepSeek V4
 Flash setup is only historical context; all launch defaults, tensor
 parallelism, model names, request parameters, and throughput gates here target
 the new 8x B200 machine.
@@ -36,10 +36,10 @@ Local harness checks that do not require GPUs:
 ```bash
 python -m unittest discover -s tests
 python -m py_compile benchmark/bench_deterministic_inference.py \
-  scripts/preflight_8xb200_deepseek_v4_pro.py \
-  scripts/tune_deepseek_v4_pro_8xb200.py \
-  scripts/summarize_deepseek_v4_pro_run.py \
-  scripts/run_8xb200_deepseek_v4_pro_pipeline.py \
+  scripts/preflight_8xb200_deepseek_v4_flash.py \
+  scripts/tune_deepseek_v4_flash_8xb200.py \
+  scripts/summarize_deepseek_v4_flash_run.py \
+  scripts/run_8xb200_deepseek_v4_flash_pipeline.py \
   tests/test_benchmark_harness.py \
   tests/test_benchmark_cli_http.py
 ```
@@ -47,8 +47,8 @@ python -m py_compile benchmark/bench_deterministic_inference.py \
 Target-host preflight checks:
 
 ```bash
-python scripts/preflight_8xb200_deepseek_v4_pro.py --engine sglang
-VLLM_BATCH_INVARIANT=1 python scripts/preflight_8xb200_deepseek_v4_pro.py --engine vllm
+python scripts/preflight_8xb200_deepseek_v4_flash.py --engine sglang
+VLLM_BATCH_INVARIANT=1 python scripts/preflight_8xb200_deepseek_v4_flash.py --engine vllm
 ```
 
 The preflight exits non-zero if `nvidia-smi` does not show exactly 8 B200 GPUs,
@@ -58,7 +58,7 @@ vLLM serve flags are absent, or `VLLM_BATCH_INVARIANT=1` is missing for vLLM.
 One-command target-host pipeline:
 
 ```bash
-python scripts/run_8xb200_deepseek_v4_pro_pipeline.py --engines sglang,vllm
+python scripts/run_8xb200_deepseek_v4_flash_pipeline.py --engines sglang,vllm
 ```
 
 This writes `pipeline.json`, per-engine preflight JSON/logs, the tuner logs,
@@ -89,53 +89,96 @@ tok/s.
 ## SGLang Primary Launch
 
 ```bash
-bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+scripts/apply_sglang_b200_deepseek_v4_flash_patch.sh
+bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 ```
 
 Equivalent command:
 
 ```bash
 python -m sglang.launch_server \
-  --model-path deepseek-ai/DeepSeek-V4-Pro \
+  --model-path deepseek-ai/DeepSeek-V4-Flash \
   --host 0.0.0.0 \
   --port 30000 \
   --tp 8 \
-  --attention-backend fa3 \
+  --attention-backend dsv4 \
+  --moe-runner-backend flashinfer_mxfp4 \
   --enable-deterministic-inference \
   --mem-fraction-static 0.90
 ```
 
 SGLang documents deterministic inference via
-`--enable-deterministic-inference` and supports the `flashinfer`, `fa3`, and
-`triton` attention backends for deterministic mode.
+`--enable-deterministic-inference`. On B200, DeepSeek-V4-Flash needs the
+DeepSeek V4 attention path first; `fa3` is kept only as a diagnostic because
+the current FA3 guard rejects SM100.
 
 ### SGLang Tuning Ladder
 
-Keep `--enable-deterministic-inference`, `--tp 8`, and DeepSeek-V4-Pro fixed.
+Keep `--enable-deterministic-inference` and DeepSeek-V4-Flash fixed. Test the
+original single-process `--tp 8` shape, but prioritize documented Flash shapes
+such as `TP=4 DP_SIZE=2` when TP=8 is nondeterministic or slow.
 
-1. Start with `ATTENTION_BACKEND=fa3`.
-2. If load or kernels fail, try `ATTENTION_BACKEND=flashinfer`.
-3. If outputs vary or FA3/FlashInfer fail, try `ATTENTION_BACKEND=triton`.
-4. If outputs vary, set `DISABLE_RADIX_CACHE=1`.
-5. For Triton variance or performance issues, try
+1. Start with `ATTENTION_BACKEND=dsv4` and
+   `MOE_RUNNER_BACKEND=flashinfer_mxfp4`.
+2. If MXFP4 precision or kernels fail, try
+   `FLASHINFER_MXFP4_MOE_PRECISION=bf16`.
+3. Test `TP=4 DP_SIZE=2` before spending more time on single-process TP=8.
+   Current upstream recipes describe DeepSeek-V4-Flash as a 4-GPU B200 serving
+   target, so 8x B200 aggregate serving may need two TP=4 data-parallel
+   replicas rather than one TP=8 graph.
+4. Test Blackwell MegaMoE as the next high-throughput MoE path:
+   `TP=4 DP_SIZE=2 MOE_RUNNER_BACKEND= MOE_A2A_BACKEND=megamoe`.
+   Do not set `--moe-runner-backend` on this candidate.
+5. Test `MOE_RUNNER_BACKEND=marlin` only as a diagnostic. The local
+   Blackwell guard patch lets it start on B200, but the observed exact-output
+   probe was not batch-invariant under concurrency.
+6. Keep `MOE_RUNNER_BACKEND=flashinfer_trtllm_routed` only as a diagnostic;
+   DeepSeek-V4-Flash declares `expert_dtype: fp4`, so routed FP8 TRT-LLM is
+   not the first-choice expert kernel.
+7. If load or kernels fail, try `ATTENTION_BACKEND=flashinfer`.
+8. If outputs vary or FlashInfer fails, try `ATTENTION_BACKEND=triton`.
+9. If outputs vary, set `DISABLE_RADIX_CACHE=1`.
+10. For Triton variance or performance issues, try
    `TRITON_ATTENTION_SPLIT_TILE_SIZE=64`, `128`, and `256`.
-6. If prefill OOMs, reduce static memory or chunk size:
+11. Treat `QUANTIZATION=unquant` with `MOE_RUNNER_BACKEND=triton` as a smoke
+   test, not a proven dequantized path. In local testing, SGLang still logged
+   `quant=fp8` for this checkpoint and crashed with `Hidden size mismatch`.
+12. If prefill OOMs, reduce static memory or chunk size:
    `MEM_FRACTION_STATIC=0.86` or `CHUNKED_PREFILL_SIZE=4096`.
-7. If throughput is below 2,500 output tok/s, assume misconfiguration:
-   verify all 8 GPUs, TP=8, deterministic backend support, no CPU fallback,
-   no single-process launch, no accidental model/config mismatch, and no
-   stale model cache.
+13. If throughput is below 2,500 output tok/s, assume misconfiguration:
+   verify all 8 GPUs, the intended TP/DP shape, deterministic backend support,
+   no CPU fallback, no accidental model/config mismatch, and no stale model
+   cache.
+
+### Local 2026-06-08 Negative Evidence
+
+These runs do not satisfy the goal, but they narrow the backend search.
+
+- `ATTENTION_BACKEND=dsv4 MOE_RUNNER_BACKEND=marlin DISABLE_RADIX_CACHE=1`
+  initially failed during weight postprocess because the SGLang Marlin guard
+  accepted Hopper/SM90 but not Blackwell.
+- After patching the guard to accept Blackwell, the Marlin server reached
+  `/health`, but exact output varied under concurrency. The short probe saw
+  mismatches at `max_new_tokens=4` and larger divergence at `8`, `16`, `32`,
+  and `64`.
+- `ATTENTION_BACKEND=dsv4 MOE_RUNNER_BACKEND=triton QUANTIZATION=unquant`
+  did not bypass the checkpoint quantization path; logs still showed
+  `quant=fp8`, then the fused Triton MoE path crashed with
+  `AssertionError: Hidden size mismatch`.
+- After the Triton crash, `nvidia-smi` stopped communicating with the driver.
+  More live validation requires a healthy driver or node reset before any
+  throughput or determinism result can be trusted.
 
 ## vLLM Fallback Launch
 
 ```bash
-bash scripts/serve_vllm_deepseek_v4_pro_8xb200.sh
+bash scripts/serve_vllm_deepseek_v4_flash_8xb200.sh
 ```
 
 Equivalent command:
 
 ```bash
-VLLM_BATCH_INVARIANT=1 vllm serve deepseek-ai/DeepSeek-V4-Pro \
+VLLM_BATCH_INVARIANT=1 vllm serve deepseek-ai/DeepSeek-V4-Flash \
   --host 0.0.0.0 \
   --port 8000 \
   --seed 0 \
@@ -174,7 +217,7 @@ Primary SGLang run:
 python benchmark/bench_deterministic_inference.py \
   --backend sglang-native \
   --base-url http://127.0.0.1:30000 \
-  --model deepseek-ai/DeepSeek-V4-Pro \
+  --model deepseek-ai/DeepSeek-V4-Flash \
   --hardware-label 8xB200
 ```
 
@@ -184,7 +227,7 @@ vLLM fallback run:
 python benchmark/bench_deterministic_inference.py \
   --backend openai-completions \
   --base-url http://127.0.0.1:8000 \
-  --model deepseek-ai/DeepSeek-V4-Pro \
+  --model deepseek-ai/DeepSeek-V4-Flash \
   --hardware-label 8xB200
 ```
 
@@ -222,20 +265,21 @@ On the target 8x B200 host, use the runner to execute the documented ladder and
 keep an audit trail:
 
 ```bash
-python scripts/tune_deepseek_v4_pro_8xb200.py --engines sglang,vllm
+python scripts/tune_deepseek_v4_flash_8xb200.py --engines sglang,vllm
 ```
 
 To rerun one configuration or a focused subset:
 
 ```bash
-python scripts/tune_deepseek_v4_pro_8xb200.py \
+python scripts/tune_deepseek_v4_flash_8xb200.py \
   --engines sglang \
   --variants 'sglang-fa3-*'
 ```
 
 The SGLang sequence tries:
 
-- `fa3`, `flashinfer`, and `triton` at `--tp 8` and memory fraction `0.90`;
+- `dsv4`, `flashinfer`, `fa3`, and `triton` around the TP=8 baseline;
+- `TP=4 DP_SIZE=2` with MXFP4 and Blackwell MegaMoE candidates;
 - radix cache disabled when needed;
 - Triton split tile sizes `64`, `128`, and `256`;
 - chunked prefill `4096` with memory fraction `0.86`.
@@ -263,7 +307,7 @@ should be treated as misconfiguration rather than a tuned result.
 Manual failure triage:
 
 ```bash
-python scripts/triage_deepseek_v4_pro_run.py runs/<timestamp>
+python scripts/triage_deepseek_v4_flash_run.py runs/<timestamp>
 ```
 
 The triage script recognizes missing GPU drivers, wrong GPU inventory, missing
@@ -274,13 +318,13 @@ throughput.
 Generate and validate the final proof report after a passing run:
 
 ```bash
-python scripts/summarize_deepseek_v4_pro_run.py runs/<timestamp>
+python scripts/summarize_deepseek_v4_flash_run.py runs/<timestamp>
 ```
 
 The summary script reads `summary.json`, the passing variant's `result.json`,
 `benchmark.md`, and `environment.json`. It writes `final_report.md` and exits
 `0` only when exact determinism checks passed, the model is
-`deepseek-ai/DeepSeek-V4-Pro`, the hardware label is `8xB200`, the environment
+`deepseek-ai/DeepSeek-V4-Flash`, the hardware label is `8xB200`, the environment
 snapshot contains exactly eight B200 GPU rows, package versions are recorded,
 and best output throughput is at least 5,000 tok/s.
 

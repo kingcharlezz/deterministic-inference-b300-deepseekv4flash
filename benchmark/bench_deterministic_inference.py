@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -13,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
+DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 DEFAULT_SGLANG_REQUEST_PARAMS = {
     "temperature": 0,
     "top_p": 1,
@@ -43,6 +44,17 @@ ORDER_PROMPTS = [
     "Order probe G: explain exact output comparison in 80 words.",
     "Order probe H: explain throughput saturation in 80 words.",
 ]
+
+
+def text_digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def text_snippet(text: str, limit: int = 160) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
 
 
 @dataclass
@@ -266,19 +278,42 @@ async def determinism_test(
                 concurrency,
             )
             mismatches = sum(response.text != baseline_text for response in responses)
+            mismatch_examples = [
+                {
+                    "index": index,
+                    "sha256_16": text_digest(response.text),
+                    "snippet": text_snippet(response.text),
+                }
+                for index, response in enumerate(responses)
+                if response.text != baseline_text
+            ][:3]
             results["same_prompt"].append(
                 {
                     "concurrency": concurrency,
                     "repeat": repeat,
                     "requests": concurrency,
                     "mismatches": mismatches,
+                    "baseline_sha256_16": text_digest(baseline_text),
+                    "baseline_snippet": text_snippet(baseline_text),
+                    "mismatch_examples": mismatch_examples,
                     "completion_tokens": responses[0].completion_tokens if responses else 0,
                 }
             )
             if mismatches:
+                print(
+                    json.dumps(
+                        {
+                            "determinism_failure": results["same_prompt"][-1],
+                        },
+                        indent=2,
+                    ),
+                    file=sys.stderr,
+                )
                 raise AssertionError(
                     "same-prompt determinism failed at "
-                    f"concurrency={concurrency}, repeat={repeat}, mismatches={mismatches}"
+                    f"concurrency={concurrency}, repeat={repeat}, mismatches={mismatches}, "
+                    f"baseline={text_digest(baseline_text)}, "
+                    f"first_mismatch={mismatch_examples[0]['sha256_16']}"
                 )
 
     if not order_checks:
@@ -304,15 +339,36 @@ async def determinism_test(
             response.text != individual_baselines[prompt]
             for prompt, response in zip(prompts, responses)
         )
+        mismatch_examples = [
+            {
+                "index": index,
+                "prompt": prompt,
+                "baseline_sha256_16": text_digest(individual_baselines[prompt]),
+                "response_sha256_16": text_digest(response.text),
+                "response_snippet": text_snippet(response.text),
+            }
+            for index, (prompt, response) in enumerate(zip(prompts, responses))
+            if response.text != individual_baselines[prompt]
+        ][:3]
         results["mixed_batch"].append(
             {
                 "concurrency": concurrency,
                 "requests": concurrency,
                 "unique_prompts": len(ORDER_PROMPTS),
                 "mismatches": mismatches,
+                "mismatch_examples": mismatch_examples,
             }
         )
         if mismatches:
+            print(
+                json.dumps(
+                    {
+                        "mixed_batch_failure": results["mixed_batch"][-1],
+                    },
+                    indent=2,
+                ),
+                file=sys.stderr,
+            )
             raise AssertionError(
                 "mixed-prompt batch invariance failed at "
                 f"concurrency={concurrency}, mismatches={mismatches}"
@@ -471,7 +527,7 @@ async def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Validate batch-invariant deterministic inference and benchmark "
-            "8x B200 DeepSeek-V4-Pro throughput."
+            "8x B200 DeepSeek-V4-Flash throughput."
         )
     )
     parser.add_argument(

@@ -127,7 +127,7 @@ class BenchmarkCliHttpTests(unittest.TestCase):
                 "--base-url",
                 base_url,
                 "--model",
-                "deepseek-ai/DeepSeek-V4-Pro",
+                "deepseek-ai/DeepSeek-V4-Flash",
                 "--hardware-label",
                 "8xB200",
                 "--determinism-repeats",

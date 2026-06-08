@@ -37,10 +37,10 @@ python3 -m unittest discover -s tests
 16 harness/preflight/report/CLI smoke tests passed.
 
 python3 -m py_compile benchmark/bench_deterministic_inference.py \
-  scripts/preflight_8xb200_deepseek_v4_pro.py \
-  scripts/tune_deepseek_v4_pro_8xb200.py \
-  scripts/summarize_deepseek_v4_pro_run.py \
-  scripts/run_8xb200_deepseek_v4_pro_pipeline.py \
+  scripts/preflight_8xb200_deepseek_v4_flash.py \
+  scripts/tune_deepseek_v4_flash_8xb200.py \
+  scripts/summarize_deepseek_v4_flash_run.py \
+  scripts/run_8xb200_deepseek_v4_flash_pipeline.py \
   tests/test_benchmark_harness.py \
   tests/test_benchmark_cli_http.py \
   tests/test_run_summary.py \
@@ -48,36 +48,36 @@ python3 -m py_compile benchmark/bench_deterministic_inference.py \
   tests/test_pipeline.py
 completed without syntax errors.
 
-python3 scripts/preflight_8xb200_deepseek_v4_pro.py --engine sglang
+python3 scripts/preflight_8xb200_deepseek_v4_flash.py --engine sglang
 failed with structured JSON for missing NVIDIA driver and missing SGLang.
 
-VLLM_BATCH_INVARIANT=1 python3 scripts/preflight_8xb200_deepseek_v4_pro.py --engine vllm
+VLLM_BATCH_INVARIANT=1 python3 scripts/preflight_8xb200_deepseek_v4_flash.py --engine vllm
 failed with structured JSON for missing NVIDIA driver and missing vLLM.
 
-python3 scripts/run_8xb200_deepseek_v4_pro_pipeline.py \
+python3 scripts/run_8xb200_deepseek_v4_flash_pipeline.py \
   --engines sglang,vllm \
   --run-dir /tmp/deepseek-pipeline-negative-triage \
   --dry-run
 stopped after preflight with no selected engines and wrote pipeline/preflight
 logs plus triage.json/triage.md under /tmp/deepseek-pipeline-negative-triage.
 
-python3 scripts/triage_deepseek_v4_pro_run.py /tmp/deepseek-pipeline-negative-triage
+python3 scripts/triage_deepseek_v4_flash_run.py /tmp/deepseek-pipeline-negative-triage
 reported missing packages, unavailable NVIDIA driver, and failed preflight for
 both engines.
 
-python3 scripts/summarize_deepseek_v4_pro_run.py --help
+python3 scripts/summarize_deepseek_v4_flash_run.py --help
 displayed the final proof report CLI.
 
-bash scripts/serve_sglang_deepseek_v4_pro_8xb200.sh
+bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 sglang is not installed. Install requirements or your SGLang wheel first.
 
-bash scripts/serve_vllm_deepseek_v4_pro_8xb200.sh
+bash scripts/serve_vllm_deepseek_v4_flash_8xb200.sh
 vllm is not installed. Install requirements or your vLLM wheel first.
 
-python3 scripts/tune_deepseek_v4_pro_8xb200.py --dry-run --engines sglang,vllm
+python3 scripts/tune_deepseek_v4_flash_8xb200.py --dry-run --engines sglang,vllm
 listed the SGLang-first and vLLM fallback tuning variants.
 
-python3 scripts/tune_deepseek_v4_pro_8xb200.py \
+python3 scripts/tune_deepseek_v4_flash_8xb200.py \
   --engines sglang \
   --variants sglang-fa3-mem090 \
   --startup-timeout-s 2 \

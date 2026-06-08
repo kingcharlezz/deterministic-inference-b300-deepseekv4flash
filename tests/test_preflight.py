@@ -9,7 +9,7 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import preflight_8xb200_deepseek_v4_pro as preflight  # noqa: E402
+import preflight_8xb200_deepseek_v4_flash as preflight  # noqa: E402
 
 
 class PreflightTests(unittest.TestCase):

@@ -10,7 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import triage_deepseek_v4_pro_run as triage  # noqa: E402
+import triage_deepseek_v4_flash_run as triage  # noqa: E402
 
 
 def write_json(path: Path, data: dict) -> None:

@@ -57,9 +57,9 @@ PATTERNS = [
     Pattern(
         "hf_auth_or_gated_model",
         "blocker",
-        r"401 Client Error|403 Client Error|gated repo|Repository Not Found|HF_TOKEN|authentication",
+        r"401 Client Error|403 Client Error|gated repo|Repository Not Found|HF_TOKEN.*(required|not set|invalid)|authentication failed|requires authentication|Unauthorized",
         "Model download/authentication failed.",
-        "Set HF_TOKEN with access to deepseek-ai/DeepSeek-V4-Pro and retry.",
+        "Set HF_TOKEN with access to deepseek-ai/DeepSeek-V4-Flash and retry.",
     ),
     Pattern(
         "cuda_oom",
@@ -78,9 +78,9 @@ PATTERNS = [
     Pattern(
         "nccl_or_distributed",
         "blocker",
-        r"NCCL|torch.distributed|ProcessGroup|connection refused",
+        r"(NCCL|torch\.distributed|ProcessGroup).*(error|failed|timeout|unhandled|invalid)|connection refused",
         "Tensor-parallel distributed setup failed.",
-        "Check all 8 GPUs, NCCL env, shared memory, networking, and TP=8 launch.",
+        "Check all 8 GPUs, NCCL env, shared memory, networking, and the intended TP/DP launch shape.",
     ),
     Pattern(
         "attention_backend",
@@ -101,7 +101,7 @@ PATTERNS = [
         "tuning",
         r"below 2500|below 2,500|treat as misconfiguration",
         "Throughput is below the misconfiguration threshold.",
-        "Verify TP=8, all GPUs active, no CPU fallback, correct model/config, and batching limits.",
+        "Verify the intended TP/DP shape, all GPUs active, no CPU fallback, correct model/config, and batching limits.",
     ),
     Pattern(
         "throughput_below_target",
@@ -186,7 +186,7 @@ def scan_result_json(path: Path, issues: list[dict[str, Any]]) -> None:
                 "throughput_below_misconfig",
                 "tuning",
                 f"Best output throughput {best:.1f} tok/s is below {misconfig:.1f}.",
-                "Treat as misconfiguration: verify TP=8, all GPUs active, batching, and backend.",
+                "Treat as misconfiguration: verify the intended TP/DP shape, all GPUs active, batching, and backend.",
                 str(path),
             )
         elif best < target:
@@ -350,7 +350,7 @@ def triage_run(run_dir: Path) -> dict[str, Any]:
 
 def format_markdown(report: dict[str, Any]) -> str:
     lines = [
-        "# DeepSeek-V4-Pro Run Triage",
+        "# DeepSeek-V4-Flash Run Triage",
         "",
         f"run_dir: `{report['run_dir']}`",
         f"issues: `{report['issue_count']}`",
@@ -378,7 +378,7 @@ def format_markdown(report: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Triage DeepSeek-V4-Pro 8x B200 run logs.")
+    parser = argparse.ArgumentParser(description="Triage DeepSeek-V4-Flash 8x B200 run logs.")
     parser.add_argument("run_dir")
     parser.add_argument("--json-output", default=None)
     parser.add_argument("--markdown-output", default=None)

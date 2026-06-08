@@ -1,6 +1,16 @@
 .venv/
+.venv-vllm/
 hf-cache/
 __pycache__/
 *.pyc
+*.log
+*.pid
 results/
 runs/
+.tmp-exec/
+.torch-extensions/
+.triton-cache/
+.tilelang-cache/
+ep_kernels_workspace/
+results-*.json
+results-*.md
