@@ -611,6 +611,12 @@ async def main() -> int:
     async with httpx.AsyncClient(
         headers=make_headers(args.api_key),
         timeout=None,
+        # Default httpx max_connections=100 silently caps in-flight requests,
+        # making the client (not the server) the bottleneck at high concurrency.
+        limits=httpx.Limits(
+            max_connections=8192,
+            max_keepalive_connections=8192,
+        ),
     ) as client:
         if not args.skip_determinism:
             output["determinism"] = await determinism_test(

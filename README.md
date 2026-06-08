@@ -236,6 +236,73 @@ This is a deterministic baseline, not the throughput target. If it passes exact
 text checks while `MAX_NUM_SEQS>1` drifts, the remaining work is finding or
 patching a batch-invariant attention + MoE + quantization path.
 
+## Verified deterministic high-throughput config (shared decode batch)
+
+This config is **exactly deterministic across concurrency** (same prompt →
+byte-identical continuation at concurrency 2/8/32/128/256/512/1024, repeated
+sweeps, zero variants) **and** sustains shared-batch throughput well above the
+useful target:
+
+| concurrency | steady-state output tok/s |
+|---|---|
+| 512  | ~2,970 |
+| 1024 | ~4,810 |
+| 2048 | ~3,750 (past the sweet spot; attention M=2048 grows step time) |
+
+The sweet spot is `MAX_NUM_SEQS=1024` / `CUDAGRAPH_CAPTURE_SIZES=1024`.
+
+```bash
+TP=8 \
+MAX_NUM_SEQS=1024 \
+MAX_NUM_BATCHED_TOKENS=2048 \
+MAX_MODEL_LEN=8192 \
+MOE_BACKEND=humming \
+KV_CACHE_DTYPE=fp8 \
+ENABLE_PREFIX_CACHING=0 \
+ASYNC_SCHEDULING=0 \
+ENFORCE_EAGER=0 \
+CUDAGRAPH_CAPTURE_SIZES=1024 \
+GENERATION_CONFIG=vllm \
+VLLM_BATCH_INVARIANT=1 \
+VLLM_DETERMINISTIC_MODEL_PAD_TOKENS=2048 \
+VLLM_HUMMING_MOE_GEMM_TYPE=grouped \
+VLLM_ENABLE_V1_MULTIPROCESSING=0 \
+bash scripts/serve_vllm_deepseek_v4_flash_8xb200.sh
+```
+
+Why it is deterministic *and* fast (the three things that had to be true):
+
+1. **Fixed MoE/GEMM reduction shape.** `VLLM_BATCH_INVARIANT=1` only overrides
+   the `aten` matmuls; DeepSeek-V4-Flash's custom Humming MoE / tilelang MHC /
+   FlashMLA kernels keep an M-dependent reduction order. `VLLM_DETERMINISTIC_MODEL_PAD_TOKENS=2048`
+   pads every shape-sensitive compute to a fixed `M=2048`, so the reduction is
+   identical regardless of how many requests share the batch.
+2. **One constant pad for every step type.** Mixed prefill+decode steps must pad
+   to the **same** `M` as pure steps (`max(prefill,decode)`, *not* the sum). The
+   old `prefill+decode = 4096` branch both overflowed the locked MoE workspace
+   (crash at scale) and gave decode tokens a different reduction than pure-decode
+   steps (flaky cross-concurrency drift). `MAX_NUM_BATCHED_TOKENS=2048` keeps
+   every step ≤ 2048 so all of them pad to exactly 2048.
+3. **A single decode CUDA-graph bucket.** `CUDAGRAPH_CAPTURE_SIZES=1024` forces
+   every decode step to the same captured shape; otherwise CUDA-graph bucketing
+   makes a request's attention `M` depend on batch composition (stragglers land
+   in small buckets), which reintroduces timing-dependent nondeterminism even
+   with the padding above. CUDA graphs (not eager) are what take this from
+   ~100 tok/s to multiple-thousand tok/s.
+
+Verify determinism and measure throughput:
+
+```bash
+# byte-identical continuation across concurrency levels
+python scripts/det_probe.py --concurrencies 2,8,32,128,256,1024 --max-tokens 32
+# sustained shared-batch throughput (read server-side "generation throughput")
+python scripts/load_gen.py --concurrency 1024 --max-tokens 256 --duration 80
+```
+
+Install the deterministic vLLM edits with
+`scripts/apply_vllm_batch_invariant_patch.sh` (it applies the base patch and
+overlays `patches/dsv4-deterministic/{attention.py,nvidia/model.py}`).
+
 Run the fallback probe:
 
 ```bash

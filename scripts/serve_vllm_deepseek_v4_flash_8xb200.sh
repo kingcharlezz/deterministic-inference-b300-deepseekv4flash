@@ -15,6 +15,7 @@ MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8}"
 GENERATION_CONFIG="${GENERATION_CONFIG:-}"
 ATTENTION_BACKEND="${ATTENTION_BACKEND:-}"
+ATTENTION_CONFIG="${ATTENTION_CONFIG:-}"
 MOE_BACKEND="${MOE_BACKEND:-}"
 ENABLE_PREFIX_CACHING="${ENABLE_PREFIX_CACHING:-}"
 ASYNC_SCHEDULING="${ASYNC_SCHEDULING:-}"
@@ -24,6 +25,7 @@ ENABLE_CHUNKED_PREFILL="${ENABLE_CHUNKED_PREFILL:-}"
 ENABLE_EXPERT_PARALLEL="${ENABLE_EXPERT_PARALLEL:-}"
 ENABLE_EP_WEIGHT_FILTER="${ENABLE_EP_WEIGHT_FILTER:-}"
 MAX_CUDAGRAPH_CAPTURE_SIZE="${MAX_CUDAGRAPH_CAPTURE_SIZE:-}"
+CUDAGRAPH_CAPTURE_SIZES="${CUDAGRAPH_CAPTURE_SIZES:-}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 HF_HOME="${HF_HOME:-$PWD/hf-cache}"
 TMPDIR="${TMPDIR:-$PWD/.tmp-exec}"
@@ -68,6 +70,9 @@ fi
 if [[ -n "$ATTENTION_BACKEND" ]]; then
   EXTRA_ARGS+=(--attention-backend "$ATTENTION_BACKEND")
 fi
+if [[ -n "$ATTENTION_CONFIG" ]]; then
+  EXTRA_ARGS+=(--attention-config "$ATTENTION_CONFIG")
+fi
 if [[ -n "$PP" ]]; then
   EXTRA_ARGS+=(--pipeline-parallel-size "$PP")
 fi
@@ -109,6 +114,12 @@ if [[ -n "$PERFORMANCE_MODE" ]]; then
 fi
 if [[ -n "$MAX_CUDAGRAPH_CAPTURE_SIZE" ]]; then
   EXTRA_ARGS+=(--max-cudagraph-capture-size "$MAX_CUDAGRAPH_CAPTURE_SIZE")
+fi
+if [[ -n "$CUDAGRAPH_CAPTURE_SIZES" ]]; then
+  # space-separated list of decode batch sizes to capture; a single value
+  # forces every decode step to pad to that fixed shape (batch-invariant
+  # attention M across concurrency levels).
+  EXTRA_ARGS+=(--cudagraph-capture-sizes $CUDAGRAPH_CAPTURE_SIZES)
 fi
 
 "$PYTHON" scripts/preflight_8xb200_deepseek_v4_flash.py \
