@@ -194,6 +194,30 @@ VLLM_BATCH_INVARIANT=1 vllm serve deepseek-ai/DeepSeek-V4-Flash \
   --max-num-batched-tokens 8192
 ```
 
+For determinism-first triage, use the serial baseline before throughput tuning:
+
+```bash
+TP=8 \
+MAX_NUM_SEQS=1 \
+MAX_NUM_BATCHED_TOKENS=8192 \
+MAX_MODEL_LEN=8192 \
+MAX_CUDAGRAPH_CAPTURE_SIZE=1 \
+MOE_BACKEND=humming \
+KV_CACHE_DTYPE=fp8 \
+ENABLE_PREFIX_CACHING=0 \
+ASYNC_SCHEDULING=0 \
+GENERATION_CONFIG=vllm \
+VLLM_BATCH_INVARIANT=1 \
+VLLM_ENABLE_V1_MULTIPROCESSING=0 \
+bash scripts/serve_vllm_deepseek_v4_flash_8xb200.sh
+```
+
+This setting intentionally queues concurrent requests by setting
+`MAX_NUM_SEQS=1`. It is useful for proving exact deterministic DeepSeek-V4-Flash
+serving on 8x B200, but it is not a throughput result. Once this passes, raise
+`MAX_NUM_SEQS` only when the attention, MoE, quantization, and TP path remains
+exactly invariant.
+
 For offline vLLM probes, also test:
 
 ```bash
@@ -300,8 +324,9 @@ The SGLang sequence tries:
 - chunked prefill `4096` with memory fraction `0.86`.
 
 The vLLM fallback sequence keeps `VLLM_BATCH_INVARIANT=1`, TP=8, seed `0`, and
-`VLLM_ENABLE_V1_MULTIPROCESSING=0`, then varies batch size, batched tokens, and
-GPU memory utilization.
+`VLLM_ENABLE_V1_MULTIPROCESSING=0`. It starts with the serial deterministic
+baseline, then varies batch size, batched tokens, and GPU memory utilization
+for throughput once exact output is stable.
 
 Every attempt writes:
 

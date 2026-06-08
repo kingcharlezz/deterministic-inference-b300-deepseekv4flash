@@ -86,6 +86,24 @@ def vllm_variants() -> list[Variant]:
         "KV_CACHE_DTYPE": "fp8",
     }
     return [
+        Variant(
+            "vllm-serial-det-baseline-humming-fp8kv",
+            "vllm",
+            8000,
+            {
+                **base,
+                "MAX_NUM_SEQS": "1",
+                "MAX_NUM_BATCHED_TOKENS": "8192",
+                "GPU_MEMORY_UTILIZATION": "0.90",
+                "GENERATION_CONFIG": "vllm",
+                "MOE_BACKEND": "humming",
+                "ENABLE_PREFIX_CACHING": "0",
+                "ASYNC_SCHEDULING": "0",
+                "MAX_CUDAGRAPH_CAPTURE_SIZE": "1",
+            },
+            "openai-completions",
+            "http://127.0.0.1:8000",
+        ),
         Variant("vllm-seq256-tok8192-mem090", "vllm", 8000, {**base, "MAX_NUM_SEQS": "256", "MAX_NUM_BATCHED_TOKENS": "8192", "GPU_MEMORY_UTILIZATION": "0.90"}, "openai-completions", "http://127.0.0.1:8000"),
         Variant(
             "vllm-flashmla-tritonunfused-eager-mem084",

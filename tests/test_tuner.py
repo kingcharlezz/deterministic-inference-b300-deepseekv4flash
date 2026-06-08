@@ -17,6 +17,26 @@ import tune_deepseek_v4_flash_8xb200 as tuner  # noqa: E402
 
 
 class TunerTests(unittest.TestCase):
+    def test_vllm_serial_deterministic_baseline_serializes_sequences(self) -> None:
+        variants = {
+            variant.name: variant
+            for variant in tuner.filter_variants(
+                tuner.vllm_variants(),
+                "vllm-serial-det-baseline-*",
+            )
+        }
+
+        self.assertEqual(set(variants), {"vllm-serial-det-baseline-humming-fp8kv"})
+        env = variants["vllm-serial-det-baseline-humming-fp8kv"].env
+        self.assertEqual(env["TP"], "8")
+        self.assertEqual(env["MAX_NUM_SEQS"], "1")
+        self.assertEqual(env["MAX_NUM_BATCHED_TOKENS"], "8192")
+        self.assertEqual(env["MOE_BACKEND"], "humming")
+        self.assertEqual(env["ENABLE_PREFIX_CACHING"], "0")
+        self.assertEqual(env["ASYNC_SCHEDULING"], "0")
+        self.assertEqual(env["MAX_CUDAGRAPH_CAPTURE_SIZE"], "1")
+        self.assertEqual(env["VLLM_BATCH_INVARIANT"], "1")
+
     def test_tp4_dp2_megamoe_variants_set_explicit_deepgemm_envs(self) -> None:
         variants = {
             variant.name: variant

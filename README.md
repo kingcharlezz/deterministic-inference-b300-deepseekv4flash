@@ -210,6 +210,32 @@ vLLM benchmark requests use:
 {"temperature":0,"top_p":1,"max_tokens":256,"seed":42}
 ```
 
+For determinism-first debugging on 8x B200, use the serial vLLM baseline before
+throughput tuning. It keeps TP=8 but sets `MAX_NUM_SEQS=1`, disables prefix
+caching and async scheduling, uses Humming MXFP4 MoE, captures only batch size
+1 CUDA graphs, and queues concurrent requests instead of letting them share a
+decode batch:
+
+```bash
+TP=8 \
+MAX_NUM_SEQS=1 \
+MAX_NUM_BATCHED_TOKENS=8192 \
+MAX_MODEL_LEN=8192 \
+MAX_CUDAGRAPH_CAPTURE_SIZE=1 \
+MOE_BACKEND=humming \
+KV_CACHE_DTYPE=fp8 \
+ENABLE_PREFIX_CACHING=0 \
+ASYNC_SCHEDULING=0 \
+GENERATION_CONFIG=vllm \
+VLLM_BATCH_INVARIANT=1 \
+VLLM_ENABLE_V1_MULTIPROCESSING=0 \
+bash scripts/serve_vllm_deepseek_v4_flash_8xb200.sh
+```
+
+This is a deterministic baseline, not the throughput target. If it passes exact
+text checks while `MAX_NUM_SEQS>1` drifts, the remaining work is finding or
+patching a batch-invariant attention + MoE + quantization path.
+
 Run the fallback probe:
 
 ```bash
