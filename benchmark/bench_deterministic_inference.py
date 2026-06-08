@@ -550,6 +550,15 @@ async def main() -> int:
     parser.add_argument("--skip-determinism", action="store_true")
     parser.add_argument("--skip-order-check", action="store_true")
     parser.add_argument("--skip-benchmark", action="store_true")
+    parser.add_argument(
+        "--mode",
+        choices=["full", "determinism", "benchmark"],
+        default="full",
+        help=(
+            "full runs determinism and throughput; determinism skips throughput "
+            "gates; benchmark skips determinism."
+        ),
+    )
     parser.add_argument("--determinism-repeats", type=int, default=3)
     parser.add_argument("--min-requests", type=int, default=256)
     parser.add_argument("--target-output-tok-s", type=float, default=5000)
@@ -568,6 +577,12 @@ async def main() -> int:
         help="Comma-separated determinism concurrency levels.",
     )
     args = parser.parse_args()
+    if args.mode == "determinism":
+        args.skip_benchmark = True
+        args.skip_determinism = False
+    elif args.mode == "benchmark":
+        args.skip_determinism = True
+        args.skip_benchmark = False
     if args.determinism_repeats <= 0:
         parser.error("--determinism-repeats must be positive")
     if args.min_requests <= 0:
@@ -588,6 +603,7 @@ async def main() -> int:
             "pass_output_tok_s": args.target_output_tok_s,
             "stretch_output_tok_s": args.stretch_output_tok_s,
         },
+        "mode": args.mode,
     }
 
     import httpx

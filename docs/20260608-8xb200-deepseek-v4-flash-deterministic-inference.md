@@ -246,6 +246,16 @@ The probe performs:
 - forward vs reverse order invariance;
 - throughput benchmark at concurrency `1,4,8,16,32,64,128,256`.
 
+For determinism-first debugging, run the same exact-text checks without
+throughput gates:
+
+```bash
+python scripts/tune_deepseek_v4_flash_8xb200.py \
+  --engines sglang \
+  --variants 'sglang-dsv4-tp4-dp2-*' \
+  --mode determinism
+```
+
 Metrics reported:
 
 - output tok/s;

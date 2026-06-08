@@ -115,11 +115,16 @@ class FakeServer:
 
 
 class BenchmarkCliHttpTests(unittest.TestCase):
-    def run_benchmark(self, backend: str, base_url: str, tmp: Path) -> subprocess.CompletedProcess[str]:
+    def run_benchmark(
+        self,
+        backend: str,
+        base_url: str,
+        tmp: Path,
+        extra_args: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         json_path = tmp / "result.json"
         md_path = tmp / "benchmark.md"
-        return subprocess.run(
-            [
+        cmd = [
                 sys.executable,
                 "benchmark/bench_deterministic_inference.py",
                 "--backend",
@@ -147,7 +152,11 @@ class BenchmarkCliHttpTests(unittest.TestCase):
                 str(json_path),
                 "--markdown-output",
                 str(md_path),
-            ],
+        ]
+        if extra_args:
+            cmd.extend(extra_args)
+        return subprocess.run(
+            cmd,
             cwd=REPO_ROOT,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -183,6 +192,31 @@ class BenchmarkCliHttpTests(unittest.TestCase):
             self.assertTrue(
                 any(row["path"] == "/v1/completions" for row in FakeInferenceHandler.requests)
             )
+
+    def test_determinism_mode_skips_benchmark_and_throughput_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            with FakeServer() as base_url:
+                proc = self.run_benchmark(
+                    "sglang-native",
+                    base_url,
+                    tmp,
+                    extra_args=[
+                        "--mode",
+                        "determinism",
+                        "--target-output-tok-s",
+                        "999999",
+                        "--misconfig-output-tok-s",
+                        "999999",
+                    ],
+                )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout)
+            result = json.loads((tmp / "result.json").read_text(encoding="utf-8"))
+            self.assertEqual(result["mode"], "determinism")
+            self.assertIn("determinism", result)
+            self.assertNotIn("benchmark", result)
+            self.assertFalse((tmp / "benchmark.md").exists())
 
 
 if __name__ == "__main__":

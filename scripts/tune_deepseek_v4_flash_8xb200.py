@@ -464,6 +464,13 @@ def best_output_tok_s(result_path: Path) -> float:
     return max(float(row.get("output_tok_s") or 0.0) for row in rows)
 
 
+def result_has_benchmark(result_path: Path) -> bool:
+    if not result_path.exists():
+        return False
+    data = json.loads(result_path.read_text(encoding="utf-8"))
+    return bool(data.get("benchmark"))
+
+
 def run_capture(cmd: list[str], timeout_s: float = 60) -> dict[str, Any]:
     try:
         proc = subprocess.run(
@@ -593,6 +600,8 @@ def run_variant(variant: Variant, args: argparse.Namespace, run_dir: Path) -> di
                 str(args.misconfig_output_tok_s),
                 "--stretch-output-tok-s",
                 str(args.stretch_output_tok_s),
+                "--mode",
+                args.mode,
                 "--json-output",
                 str(result_json_path),
                 "--markdown-output",
@@ -618,7 +627,11 @@ def run_variant(variant: Variant, args: argparse.Namespace, run_dir: Path) -> di
             meta["benchmark_exit_code"] = bench_proc.returncode
             meta["best_output_tok_s"] = best_output_tok_s(result_json_path)
             if bench_proc.returncode == 0:
-                meta["status"] = "passed"
+                meta["status"] = (
+                    "deterministic_passed"
+                    if not result_has_benchmark(result_json_path)
+                    else "passed"
+                )
             elif meta["best_output_tok_s"] < args.misconfig_output_tok_s:
                 meta["status"] = "misconfiguration_or_failed_benchmark"
             else:
@@ -683,6 +696,12 @@ def main() -> int:
     parser.add_argument("--misconfig-output-tok-s", type=float, default=2500)
     parser.add_argument("--stretch-output-tok-s", type=float, default=8000)
     parser.add_argument(
+        "--mode",
+        choices=["full", "determinism", "benchmark"],
+        default="full",
+        help="Pass-through mode for benchmark/bench_deterministic_inference.py.",
+    )
+    parser.add_argument(
         "--skip-gpu-check",
         action="store_true",
         help="Do not fail fast when nvidia-smi cannot verify 8x B200.",
@@ -732,8 +751,15 @@ def main() -> int:
         attempts.append(attempt)
         write_summary(run_dir, attempts)
         print(json.dumps(attempt, indent=2), flush=True)
-        if attempt.get("status") == "passed":
-            print(f"PASS: {variant.name} reached target; results in {run_dir}", flush=True)
+        if attempt.get("status") in {"passed", "deterministic_passed"}:
+            if attempt.get("status") == "deterministic_passed":
+                print(
+                    f"DETERMINISTIC PASS: {variant.name}; throughput not measured; "
+                    f"results in {run_dir}",
+                    flush=True,
+                )
+            else:
+                print(f"PASS: {variant.name} reached target; results in {run_dir}", flush=True)
             return 0
 
     print(f"No variant reached target; results in {run_dir}", file=sys.stderr)

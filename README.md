@@ -159,6 +159,15 @@ To run the SGLang tuning ladder automatically on the target host:
 python scripts/tune_deepseek_v4_flash_8xb200.py --engines sglang
 ```
 
+For determinism-first triage, skip throughput gates until exact text is stable:
+
+```bash
+python scripts/tune_deepseek_v4_flash_8xb200.py \
+  --engines sglang \
+  --variants 'sglang-dsv4-tp4-dp2-*' \
+  --mode determinism
+```
+
 Use `--variants 'sglang-fa3-*'` or an exact variant name to rerun a focused
 subset after inspecting logs.
 

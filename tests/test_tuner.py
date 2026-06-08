@@ -99,6 +99,27 @@ class TunerTests(unittest.TestCase):
         self.assertEqual(summary["attempts"][0]["status"], "gpu_unavailable")
         self.assertEqual(summary["attempts"][0]["name"], "preflight-gpu-inventory")
 
+    def test_result_has_benchmark_detects_determinism_only_result(self) -> None:
+        result_path = Path(tempfile.mkdtemp()) / "result.json"
+        result_path.write_text(
+            json.dumps(
+                {
+                    "mode": "determinism",
+                    "determinism": {"same_prompt": [], "mixed_batch": [], "order": []},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertFalse(tuner.result_has_benchmark(result_path))
+
+        result_path.write_text(
+            json.dumps({"mode": "full", "benchmark": [{"output_tok_s": 123.0}]}) + "\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(tuner.result_has_benchmark(result_path))
+
 
 if __name__ == "__main__":
     unittest.main()
