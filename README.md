@@ -122,7 +122,7 @@ Try deterministic attention backends in this order when debugging:
 MOE_RUNNER_BACKEND=flashinfer_mxfp4 ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 MOE_RUNNER_BACKEND=flashinfer_mxfp4 FLASHINFER_MXFP4_MOE_PRECISION=bf16 ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 TP=4 DP_SIZE=2 MOE_RUNNER_BACKEND=flashinfer_mxfp4 ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
-TP=4 DP_SIZE=2 MOE_RUNNER_BACKEND= MOE_A2A_BACKEND=megamoe ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
+TP=4 DP_SIZE=2 MOE_RUNNER_BACKEND= MOE_A2A_BACKEND=megamoe SGLANG_OPT_USE_DEEPGEMM_MEGA_MOE=1 ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 MOE_RUNNER_BACKEND=marlin DISABLE_RADIX_CACHE=1 ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 MOE_RUNNER_BACKEND=flashinfer_trtllm_routed ATTENTION_BACKEND=dsv4 bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh
 ATTENTION_BACKEND=flashinfer bash scripts/serve_sglang_deepseek_v4_flash_8xb200.sh

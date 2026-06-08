@@ -127,8 +127,13 @@ such as `TP=4 DP_SIZE=2` when TP=8 is nondeterministic or slow.
    target, so 8x B200 aggregate serving may need two TP=4 data-parallel
    replicas rather than one TP=8 graph.
 4. Test Blackwell MegaMoE as the next high-throughput MoE path:
-   `TP=4 DP_SIZE=2 MOE_RUNNER_BACKEND= MOE_A2A_BACKEND=megamoe`.
-   Do not set `--moe-runner-backend` on this candidate.
+   `TP=4 DP_SIZE=2 MOE_RUNNER_BACKEND= MOE_A2A_BACKEND=megamoe
+   SGLANG_OPT_USE_DEEPGEMM_MEGA_MOE=1`. Do not set
+   `--moe-runner-backend` on this candidate. The tuner sets
+   `SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK=8320` for the
+   high-throughput recipe and also tests W4A4 by enabling
+   `SGLANG_OPT_DEEPGEMM_MEGA_MOE_USE_FP4_ACTS=1` and
+   `SGLANG_OPT_DEEPGEMM_MEGA_MOE_USE_MXF4_KIND=1`.
 5. Test `MOE_RUNNER_BACKEND=marlin` only as a diagnostic. The local
    Blackwell guard patch lets it start on B200, but the observed exact-output
    probe was not batch-invariant under concurrency.

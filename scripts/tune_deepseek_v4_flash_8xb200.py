@@ -55,8 +55,8 @@ def sglang_variants() -> list[Variant]:
         Variant("sglang-dsv4-mxfp4-mem090", "sglang", 30000, {**base, "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "flashinfer_mxfp4", "MEM_FRACTION_STATIC": "0.90"}, "sglang-native", "http://127.0.0.1:30000"),
         Variant("sglang-dsv4-mxfp4-bf16-mem090", "sglang", 30000, {**base, "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "flashinfer_mxfp4", "FLASHINFER_MXFP4_MOE_PRECISION": "bf16", "MEM_FRACTION_STATIC": "0.90"}, "sglang-native", "http://127.0.0.1:30000"),
         Variant("sglang-dsv4-tp4-dp2-mxfp4-mem090", "sglang", 30000, {**base, "TP": "4", "DP_SIZE": "2", "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "flashinfer_mxfp4", "MEM_FRACTION_STATIC": "0.90"}, "sglang-native", "http://127.0.0.1:30000"),
-        Variant("sglang-dsv4-tp4-dp2-megamoe-w4a8-mem086", "sglang", 30000, {**base, "TP": "4", "DP_SIZE": "2", "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "", "MOE_A2A_BACKEND": "megamoe", "MEM_FRACTION_STATIC": "0.86", "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK": "8320"}, "sglang-native", "http://127.0.0.1:30000"),
-        Variant("sglang-dsv4-tp4-dp2-megamoe-w4a4-mem086", "sglang", 30000, {**base, "TP": "4", "DP_SIZE": "2", "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "", "MOE_A2A_BACKEND": "megamoe", "MEM_FRACTION_STATIC": "0.86", "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK": "8320", "SGLANG_OPT_DEEPGEMM_MEGA_MOE_USE_FP4_ACTS": "1", "SGLANG_OPT_DEEPGEMM_MEGA_MOE_USE_MXF4_KIND": "1"}, "sglang-native", "http://127.0.0.1:30000"),
+        Variant("sglang-dsv4-tp4-dp2-megamoe-w4a8-mem086", "sglang", 30000, {**base, "TP": "4", "DP_SIZE": "2", "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "", "MOE_A2A_BACKEND": "megamoe", "MEM_FRACTION_STATIC": "0.86", "SGLANG_OPT_USE_DEEPGEMM_MEGA_MOE": "1", "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK": "8320"}, "sglang-native", "http://127.0.0.1:30000"),
+        Variant("sglang-dsv4-tp4-dp2-megamoe-w4a4-mem086", "sglang", 30000, {**base, "TP": "4", "DP_SIZE": "2", "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "", "MOE_A2A_BACKEND": "megamoe", "MEM_FRACTION_STATIC": "0.86", "SGLANG_OPT_USE_DEEPGEMM_MEGA_MOE": "1", "SGLANG_OPT_DEEPGEMM_MEGA_MOE_NUM_MAX_TOKENS_PER_RANK": "8320", "SGLANG_OPT_DEEPGEMM_MEGA_MOE_USE_FP4_ACTS": "1", "SGLANG_OPT_DEEPGEMM_MEGA_MOE_USE_MXF4_KIND": "1"}, "sglang-native", "http://127.0.0.1:30000"),
         Variant("sglang-dsv4-marlin-noradix-mem090", "sglang", 30000, {**base, "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "marlin", "MEM_FRACTION_STATIC": "0.90", "DISABLE_RADIX_CACHE": "1"}, "sglang-native", "http://127.0.0.1:30000"),
         Variant("sglang-dsv4-cutlass-noradix-mem090", "sglang", 30000, {**base, "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "flashinfer_cutlass", "MEM_FRACTION_STATIC": "0.90", "DISABLE_RADIX_CACHE": "1"}, "sglang-native", "http://127.0.0.1:30000"),
         Variant("sglang-dsv4-cutlass-fp16-noradix-mem090", "sglang", 30000, {**base, "ATTENTION_BACKEND": "dsv4", "MOE_RUNNER_BACKEND": "flashinfer_cutlass", "DTYPE": "float16", "MEM_FRACTION_STATIC": "0.90", "DISABLE_RADIX_CACHE": "1"}, "sglang-native", "http://127.0.0.1:30000"),
@@ -515,6 +515,23 @@ def write_environment_snapshot(
     )
 
 
+def query_gpu_inventory() -> dict[str, Any]:
+    return run_capture(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,name,driver_version,memory.total",
+            "--format=csv,noheader",
+        ]
+    )
+
+
+def gpu_inventory_is_8xb200(snapshot: dict[str, Any]) -> bool:
+    if snapshot.get("exit_code") != 0:
+        return False
+    rows = [line.strip() for line in str(snapshot.get("output", "")).splitlines() if line.strip()]
+    return len(rows) == 8 and all("B200" in row for row in rows)
+
+
 def run_variant(variant: Variant, args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
     variant_dir = run_dir / variant.name
     variant_dir.mkdir(parents=True, exist_ok=True)
@@ -665,6 +682,11 @@ def main() -> int:
     parser.add_argument("--target-output-tok-s", type=float, default=5000)
     parser.add_argument("--misconfig-output-tok-s", type=float, default=2500)
     parser.add_argument("--stretch-output-tok-s", type=float, default=8000)
+    parser.add_argument(
+        "--skip-gpu-check",
+        action="store_true",
+        help="Do not fail fast when nvidia-smi cannot verify 8x B200.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -680,6 +702,28 @@ def main() -> int:
         return 0
 
     write_environment_snapshot(run_dir, args.python, args.sglang_python, args.vllm_python)
+
+    if not args.skip_gpu_check:
+        gpu_snapshot = query_gpu_inventory()
+        if not gpu_inventory_is_8xb200(gpu_snapshot):
+            attempts = [
+                {
+                    "name": "preflight-gpu-inventory",
+                    "engine": "host",
+                    "status": "gpu_unavailable",
+                    "best_output_tok_s": 0.0,
+                    "result_json": str(run_dir / "environment.json"),
+                    "gpu": gpu_snapshot,
+                }
+            ]
+            write_summary(run_dir, attempts)
+            print(json.dumps(attempts[0], indent=2), flush=True)
+            print(
+                "No variant launched because nvidia-smi did not verify exactly 8 B200 GPUs; "
+                f"results in {run_dir}",
+                file=sys.stderr,
+            )
+            return 2
 
     attempts: list[dict[str, Any]] = []
     for variant in variants:
