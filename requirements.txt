@@ -1,2 +1,6 @@
+# Benchmark client shared by both engine paths.
 httpx==0.28.1
-vllm==0.22.1
+
+# Install one engine file in the same environment:
+#   python -m pip install -r requirements-sglang.txt
+#   python -m pip install -r requirements-vllm.txt
