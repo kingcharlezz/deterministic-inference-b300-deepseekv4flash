@@ -66,8 +66,18 @@ from vllm.forward_context import get_forward_context
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
 
+def _deterministic_kernels() -> bool:
+    # See attention.py: enable fixed-M padding + single aux stream either under
+    # full batch-invariance or when VLLM_DETERMINISTIC_FORCE_PAD=1 (keeps fast
+    # cuBLAS matmuls + multi-channel NCCL for throughput while still pinning the
+    # custom MoE/attention kernels that dominate shared-batch drift).
+    return envs.VLLM_BATCH_INVARIANT or os.getenv(
+        "VLLM_DETERMINISTIC_FORCE_PAD", "0"
+    ) == "1"
+
+
 def _deterministic_model_pad_target(num_tokens: int) -> int:
-    if not envs.VLLM_BATCH_INVARIANT:
+    if not _deterministic_kernels():
         return num_tokens
     legacy_target = os.getenv("VLLM_DETERMINISTIC_MODEL_PAD_TOKENS", "0")
     prefill_target = int(
@@ -998,7 +1008,7 @@ class DeepseekV4Model(nn.Module):
         # kv_score). fused_wqa_wkv stays on the default stream.
         #
         aux_stream_list = (
-            None if envs.VLLM_BATCH_INVARIANT else [torch.cuda.Stream() for _ in range(3)]
+            None if _deterministic_kernels() else [torch.cuda.Stream() for _ in range(3)]
         )
 
         # Reserved topk indices buffer for all Indexer layers to reuse.

@@ -247,6 +247,51 @@ many tokens ride along. Pick the config by what you need.
 > default executor caps at ~32 threads) only ever exercises ~32-way batching and
 > will *report* determinism that does not hold at real concurrency.
 
+### Recommended deployment: byte-exact serving at ≤50 concurrency
+
+For a deployment that serves **≤50 concurrent requests** and wants byte-exact
+determinism with per-request responsiveness (NOT aggregate throughput), size the
+decode CUDA-graph bucket to the load and use the prefill-priority no-mix
+scheduler:
+
+```bash
+VLLM_DETERMINISTIC_NO_MIX=1 \
+TP=8 \
+MAX_NUM_SEQS=64 \
+CUDAGRAPH_CAPTURE_SIZES=64 \
+MAX_NUM_BATCHED_TOKENS=2048 \
+MAX_MODEL_LEN=131072 \
+MOE_BACKEND=humming \
+KV_CACHE_DTYPE=fp8 \
+ENABLE_PREFIX_CACHING=0 \
+ASYNC_SCHEDULING=0 \
+ENFORCE_EAGER=0 \
+GENERATION_CONFIG=vllm \
+VLLM_BATCH_INVARIANT=1 \
+VLLM_DETERMINISTIC_MODEL_PAD_TOKENS=2048 \
+VLLM_HUMMING_MOE_GEMM_TYPE=grouped \
+VLLM_ENABLE_V1_MULTIPROCESSING=0 \
+bash scripts/serve_vllm_deepseek_v4_flash_8xb200.sh
+```
+
+Validated (`scripts/serving_validate.py` + `scripts/det_probe.py`):
+- **Determinism gate PASS** — byte-identical output across concurrency 2..50,
+  3 repeats, **and** mixed-batch + submission-order invariance (16 distinct
+  prompts, 324 occurrences, every prompt one unique completion).
+- **Performance @ conc 50** — TTFT p95 ≈ 2.9 s (conc 1: 154 ms); per-request
+  decode ≈ 7.3 tok/s. Decode rate is bounded by the byte-exact mechanism (fixed
+  2048-row MoE pad + single-channel NCCL); the MoE pad must stay 2048 (1024
+  drifts), so per-request decode cannot go faster without custom batch-invariant
+  kernels (see `benchmark/det_kernel_poc.py`).
+
+Note the **decode bucket (64) is sized to the load** while the **MoE pad stays
+2048** — these are different knobs: the bucket fixes the attention row count
+(smaller = lower latency); the pad fixes the MoE reduction shape (must be ≥2048
+for determinism). `VLLM_DETERMINISTIC_NO_MIX=1` is prefill-priority: a burst is
+admitted in a pure-prefill step, then served by pure-decode steps, so no step
+mixes prefill+decode (the drift source) while new requests still prefill
+promptly (the decode-priority variant serialized the batch → 35 s TTFT).
+
 ### A. Byte-exact deterministic, ≤100 concurrency (recommended for verification)
 
 Same prompt → **byte-identical** continuation, validated at conc 1/32/64/100,

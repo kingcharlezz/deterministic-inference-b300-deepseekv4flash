@@ -374,9 +374,29 @@ class Scheduler(SchedulerInterface):
 
         self.kv_cache_manager.new_step_starts()
 
+        # Determinism (VLLM_DETERMINISTIC_NO_MIX=1): make every step either
+        # pure-prefill or pure-decode so a decode token never shares a step
+        # (and thus a variable attention/MoE shape) with a prefill token.
+        # PREFILL-PRIORITY: if there is an admittable waiting request (and we
+        # are under the running cap), run a prefill-only step this iteration
+        # (skip the decode/running phase). This keeps TTFT low -- a burst of
+        # new requests is admitted in the next step instead of waiting for all
+        # in-flight decodes to finish (the decode-priority variant serialized
+        # the batch -> 35s TTFT at conc 50). Once the batch is admitted and
+        # nothing is waiting, every step is pure-decode.
+        _prefill_only_step = (
+            os.environ.get("VLLM_DETERMINISTIC_NO_MIX", "0") == "1"
+            and bool(self.waiting or self.skipped_waiting)
+            and len(self.running) < self.max_num_running_reqs
+        )
+
         # First, schedule the RUNNING requests.
         req_index = 0
-        while req_index < len(self.running) and token_budget > 0:
+        while (
+            not _prefill_only_step
+            and req_index < len(self.running)
+            and token_budget > 0
+        ):
             request = self.running[req_index]
 
             if (

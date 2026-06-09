@@ -62,8 +62,21 @@ from vllm.v1.kv_cache_interface import KVCacheSpec, MLAAttentionSpec
 logger = init_logger(__name__)
 
 
+def _deterministic_kernels() -> bool:
+    # Treat the custom-kernel determinism path (fixed-M token padding + single
+    # aux stream) as enabled either under full batch-invariance OR when
+    # VLLM_DETERMINISTIC_FORCE_PAD=1. The latter keeps fast cuBLAS matmuls and
+    # multi-channel NCCL (so throughput stays high) while still pinning the
+    # DeepSeek-V4 custom MoE / attention / indexer kernels to a fixed shape --
+    # those custom kernels are the dominant source of shared-batch drift, so
+    # padding them alone recovers most determinism at a fraction of the cost.
+    return envs.VLLM_BATCH_INVARIANT or os.getenv(
+        "VLLM_DETERMINISTIC_FORCE_PAD", "0"
+    ) == "1"
+
+
 def _deterministic_model_pad_target(num_tokens: int) -> int:
-    if not envs.VLLM_BATCH_INVARIANT:
+    if not _deterministic_kernels():
         return num_tokens
     legacy_target = os.getenv("VLLM_DETERMINISTIC_MODEL_PAD_TOKENS", "0")
     prefill_target = int(
@@ -298,7 +311,7 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
             # ROCm, where aux_stream_list is None.
             indexer_aux_stream = (
                 None
-                if envs.VLLM_BATCH_INVARIANT or aux_stream_list is None
+                if _deterministic_kernels() or aux_stream_list is None
                 else aux_stream_list[2]
             )
             self.indexer = DeepseekV4Indexer(
@@ -479,7 +492,7 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
             aux_streams,
             enable=hidden_states.shape[0]
             <= envs.VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD
-            and not envs.VLLM_BATCH_INVARIANT,
+            and not _deterministic_kernels(),
         )
 
         return qr_kv, kv_score, indexer_kv_score, indexer_weights
@@ -535,14 +548,14 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
                 self.ln_events[0],
                 [self.ln_events[1], self.ln_events[2]],
                 [aux_streams[0], aux_streams[1]] if aux_streams is not None else None,
-                enable=aux_streams is not None and not envs.VLLM_BATCH_INVARIANT,
+                enable=aux_streams is not None and not _deterministic_kernels(),
             )
         elif self.compressor is not None:
             # wq_b + kv_insert on default, compressor on aux.
             aux_stream = (
                 self.aux_stream_list[0] if self.aux_stream_list is not None else None
             )
-            if envs.VLLM_BATCH_INVARIANT:
+            if _deterministic_kernels():
                 aux_stream = None
             compressor = self.compressor
 

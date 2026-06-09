@@ -126,9 +126,11 @@ if [[ -n "$SPECULATIVE_CONFIG" ]]; then
   EXTRA_ARGS+=(--speculative-config "$SPECULATIVE_CONFIG")
 fi
 
-"$PYTHON" scripts/preflight_8xb200_deepseek_v4_flash.py \
-  --engine vllm \
-  --python "$PYTHON"
+if [[ "${SKIP_PREFLIGHT:-0}" != "1" ]]; then
+  "$PYTHON" scripts/preflight_8xb200_deepseek_v4_flash.py \
+    --engine vllm \
+    --python "$PYTHON"
+fi
 
 exec "${VLLM_CMD[@]}" "$MODEL" \
   --host "$HOST" \

@@ -62,9 +62,20 @@ fi
 SCHED_DST="$SITE_PACKAGES/vllm/v1/core/sched/scheduler.py"
 if [[ -f "$SCHED_DST" ]]; then
   cp "$ROOT/patches/dsv4-deterministic/v1/core/sched/scheduler.py" "$SCHED_DST"
-  echo "overlaid deterministic no-mix v1 scheduler.py"
+  echo "overlaid deterministic no-mix (prefill-priority) v1 scheduler.py"
 else
   echo "WARNING: $SCHED_DST not found; skipped scheduler overlay" >&2
+fi
+
+# batch_invariant.py: adds the VLLM_DETERMINISTIC_FAST_NCCL escape hatch (skip
+# single-channel NCCL determinism settings for throughput). Inert unless that
+# env is set; the byte-exact serving config does not set it.
+BI_DST="$SITE_PACKAGES/vllm/model_executor/layers/batch_invariant.py"
+if [[ -f "$BI_DST" ]]; then
+  cp "$ROOT/patches/dsv4-deterministic/model_executor/layers/batch_invariant.py" "$BI_DST"
+  echo "overlaid batch_invariant.py (FAST_NCCL knob)"
+else
+  echo "WARNING: $BI_DST not found; skipped batch_invariant overlay" >&2
 fi
 
 "$VLLM_PYTHON" - <<'PY'
