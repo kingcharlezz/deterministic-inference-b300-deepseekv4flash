@@ -78,6 +78,18 @@ else
   echo "WARNING: $BI_DST not found; skipped batch_invariant overlay" >&2
 fi
 
+# parallel.py: adds VLLM_DETERMINISTIC_ALLOW_CUSTOM_AR — keeps vLLM's custom
+# one-shot all-reduce (deterministic fixed rank-order sum) enabled under batch
+# invariance instead of force-falling-back to slow single-channel NCCL. This is
+# the key throughput unlock for the deterministic decode path on TP8.
+PAR_DST="$SITE_PACKAGES/vllm/config/parallel.py"
+if [[ -f "$PAR_DST" ]]; then
+  cp "$ROOT/patches/dsv4-deterministic/config/parallel.py" "$PAR_DST"
+  echo "overlaid parallel.py (ALLOW_CUSTOM_AR knob)"
+else
+  echo "WARNING: $PAR_DST not found; skipped parallel.py overlay" >&2
+fi
+
 "$VLLM_PYTHON" - <<'PY'
 import vllm.envs as envs
 
