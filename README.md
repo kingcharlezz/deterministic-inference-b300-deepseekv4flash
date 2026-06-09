@@ -236,32 +236,34 @@ This is a deterministic baseline, not the throughput target. If it passes exact
 text checks while `MAX_NUM_SEQS>1` drifts, the remaining work is finding or
 patching a batch-invariant attention + MoE + quantization path.
 
-## Verified deterministic high-throughput config (shared decode batch)
+## Two verified configs: byte-exact (≤100 conc) vs high-throughput
 
-This config is **exactly deterministic across concurrency** (same prompt →
-byte-identical continuation at concurrency 2/8/32/128/256/512/1024, repeated
-sweeps, zero variants) **and** sustains shared-batch throughput well above the
-useful target:
+Determinism and throughput trade off here, because determinism forces every
+decode step through a fixed `M=2048` MoE shape whose cost is independent of how
+many tokens ride along. Pick the config by what you need.
 
-| concurrency | steady-state output tok/s |
-|---|---|
-| 512  | ~2,970 |
-| 1024 | ~4,810 |
-| 2048 | ~3,750 (past the sweet spot; attention M=2048 grows step time) |
+> **Measuring determinism correctly:** use `scripts/det_probe.py`, which sizes
+> its client thread pool to the requested concurrency. A naive probe (Python's
+> default executor caps at ~32 threads) only ever exercises ~32-way batching and
+> will *report* determinism that does not hold at real concurrency.
 
-The sweet spot is `MAX_NUM_SEQS=1024` / `CUDAGRAPH_CAPTURE_SIZES=1024`.
+### A. Byte-exact deterministic, ≤100 concurrency (recommended for verification)
+
+Same prompt → **byte-identical** continuation, validated at conc 1/32/64/100,
+cross-concurrency, repeated sweeps, 200-token outputs, zero variants.
 
 ```bash
+VLLM_DETERMINISTIC_NO_MIX=1 \
 TP=8 \
-MAX_NUM_SEQS=1024 \
+MAX_NUM_SEQS=128 \
 MAX_NUM_BATCHED_TOKENS=2048 \
-MAX_MODEL_LEN=8192 \
+MAX_MODEL_LEN=131072 \
 MOE_BACKEND=humming \
 KV_CACHE_DTYPE=fp8 \
 ENABLE_PREFIX_CACHING=0 \
 ASYNC_SCHEDULING=0 \
 ENFORCE_EAGER=0 \
-CUDAGRAPH_CAPTURE_SIZES=1024 \
+CUDAGRAPH_CAPTURE_SIZES=128 \
 GENERATION_CONFIG=vllm \
 VLLM_BATCH_INVARIANT=1 \
 VLLM_DETERMINISTIC_MODEL_PAD_TOKENS=2048 \
@@ -270,38 +272,62 @@ VLLM_ENABLE_V1_MULTIPROCESSING=0 \
 bash scripts/serve_vllm_deepseek_v4_flash_8xb200.sh
 ```
 
-Why it is deterministic *and* fast (the three things that had to be true):
+Throughput here is ~250–360 output tok/s at conc ≤100 — low on purpose: the
+2048-row MoE pad is mostly idle for ≤100 real tokens, and that per-step cost
+dominates. This is the price of byte-exactness on this model.
 
-1. **Fixed MoE/GEMM reduction shape.** `VLLM_BATCH_INVARIANT=1` only overrides
-   the `aten` matmuls; DeepSeek-V4-Flash's custom Humming MoE / tilelang MHC /
-   FlashMLA kernels keep an M-dependent reduction order. `VLLM_DETERMINISTIC_MODEL_PAD_TOKENS=2048`
-   pads every shape-sensitive compute to a fixed `M=2048`, so the reduction is
-   identical regardless of how many requests share the batch.
-2. **One constant pad for every step type.** Mixed prefill+decode steps must pad
-   to the **same** `M` as pure steps (`max(prefill,decode)`, *not* the sum). The
-   old `prefill+decode = 4096` branch both overflowed the locked MoE workspace
-   (crash at scale) and gave decode tokens a different reduction than pure-decode
-   steps (flaky cross-concurrency drift). `MAX_NUM_BATCHED_TOKENS=2048` keeps
-   every step ≤ 2048 so all of them pad to exactly 2048.
-3. **A single decode CUDA-graph bucket.** `CUDAGRAPH_CAPTURE_SIZES=1024` forces
-   every decode step to the same captured shape; otherwise CUDA-graph bucketing
-   makes a request's attention `M` depend on batch composition (stragglers land
-   in small buckets), which reintroduces timing-dependent nondeterminism even
-   with the padding above. CUDA graphs (not eager) are what take this from
-   ~100 tok/s to multiple-thousand tok/s.
+### B. High throughput, *approximate* determinism (conc 1024)
 
-Verify determinism and measure throughput:
+`MAX_NUM_SEQS=1024 CUDAGRAPH_CAPTURE_SIZES=1024` (drop `VLLM_DETERMINISTIC_NO_MIX`,
+`MAX_MODEL_LEN=8192`) sustains **~4,810 output tok/s** at conc 1024
+(~2,970 at 512) with short prompts. But it is **not byte-exact** under real
+high concurrency: a minority of requests diverge on late tokens (≈78–98%
+byte-agreement; **final answers far more stable** — GSM8K matched 1311/1319
+between conc 512 and 1024, and accuracy is 95.45%). Use this when aggregate
+throughput matters more than exact reproducibility.
+
+### Why byte-exactness needs all four knobs
+
+1. **Fixed MoE/GEMM shape** (`VLLM_DETERMINISTIC_MODEL_PAD_TOKENS=2048`).
+   `VLLM_BATCH_INVARIANT=1` only overrides `aten` matmuls; the custom Humming
+   MoE / tilelang MHC / FlashMLA kernels keep an `M`-dependent reduction. Padding
+   pins it. `M=2048` is empirically the value that works — 1024 still drifts.
+2. **Single decode CUDA-graph bucket** (`CUDAGRAPH_CAPTURE_SIZES=N`). Otherwise
+   CUDA-graph bucketing makes a request's attention `M` depend on batch
+   composition (stragglers land in small buckets) → timing-dependent drift.
+3. **Fixed prefill `M`** (`MAX_NUM_BATCHED_TOKENS=2048`). Every prefill batch is
+   ≤2048 → padded to exactly 2048, so a prompt's prefill output is independent of
+   how many prompts co-batch. Letting it float (e.g. `bt=8192`) makes conc>68
+   prefill at a larger `M` and produce a *different* output than low concurrency.
+4. **No mixed prefill+decode steps** (`VLLM_DETERMINISTIC_NO_MIX=1`, a V1
+   scheduler patch). The scheduler otherwise co-schedules a new prefill with
+   in-flight decodes; the decode token computed in that variable-shape mixed step
+   drifts vs a pure-decode step. The gate defers new prefills whenever a decode
+   is already scheduled, so every step is pure-prefill or pure-decode.
+
+Approaches that were tested and **rejected** for determinism: pad=1024 (drifts),
+prefill-pad=8192 (drifts), MTP speculative decoding (clean at ≤64 but 30 variants
+at conc 100, only ~+12% throughput).
+
+Caveat: byte-exactness is validated for prompts that prefill within one
+`MAX_NUM_BATCHED_TOKENS` step (≤2048 tokens). Longer prompts chunk across steps
+and can re-mix with decodes; raise `MAX_NUM_BATCHED_TOKENS` above the longest
+prompt (keeping it the single fixed pad value) if you need exactness on long
+inputs.
+
+Verify:
 
 ```bash
-# byte-identical continuation across concurrency levels
-python scripts/det_probe.py --concurrencies 2,8,32,128,256,1024 --max-tokens 32
-# sustained shared-batch throughput (read server-side "generation throughput")
-python scripts/load_gen.py --concurrency 1024 --max-tokens 256 --duration 80
+# byte-identical continuation at real concurrency (executor sized to --concurrencies)
+python scripts/det_probe.py --concurrencies 1,32,64,100 --max-tokens 160
+# throughput (read server-side "generation throughput")
+python scripts/load_gen.py --concurrency 100 --max-tokens 256 --duration 60 --api-key "$VLLM_API_KEY"
 ```
 
 Install the deterministic vLLM edits with
-`scripts/apply_vllm_batch_invariant_patch.sh` (it applies the base patch and
-overlays `patches/dsv4-deterministic/{attention.py,nvidia/model.py}`).
+`scripts/apply_vllm_batch_invariant_patch.sh` (applies the base patch, overlays
+`patches/dsv4-deterministic/{attention.py,nvidia/model.py}`, and overlays the
+no-mix V1 `scheduler.py`).
 
 ### Task quality (GSM8K)
 

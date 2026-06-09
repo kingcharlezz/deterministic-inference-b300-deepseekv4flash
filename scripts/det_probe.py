@@ -6,7 +6,9 @@ per concurrency level. temp=0, top_p=1, seed=42, greedy.
 import argparse
 import asyncio
 import collections
+import concurrent.futures
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -27,7 +29,10 @@ def one_request(base_url, model, prompt, max_tokens, seed):
     req = urllib.request.Request(
         base_url.rstrip("/") + "/v1/completions",
         data=body,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer x"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + os.environ.get("VLLM_API_KEY", "x"),
+        },
     )
     with urllib.request.urlopen(req, timeout=600) as r:
         data = json.loads(r.read())
@@ -36,15 +41,20 @@ def one_request(base_url, model, prompt, max_tokens, seed):
 
 async def run_concurrency(base_url, model, prompt, max_tokens, seed, conc):
     loop = asyncio.get_event_loop()
+    # Dedicated executor sized to `conc` so all requests are truly in flight at
+    # once (the default pool caps at ~32, which would only test ~32-way batching
+    # regardless of `conc`).
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=conc)
     tasks = [
         loop.run_in_executor(
-            None, one_request, base_url, model, prompt, max_tokens, seed
+            ex, one_request, base_url, model, prompt, max_tokens, seed
         )
         for _ in range(conc)
     ]
     t0 = time.time()
     texts = await asyncio.gather(*tasks)
     dt = time.time() - t0
+    ex.shutdown(wait=False)
     counts = collections.Counter(texts)
     unique = len(counts)
     # mismatches = number of completions not equal to the modal text

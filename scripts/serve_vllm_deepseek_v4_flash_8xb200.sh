@@ -26,6 +26,7 @@ ENABLE_EXPERT_PARALLEL="${ENABLE_EXPERT_PARALLEL:-}"
 ENABLE_EP_WEIGHT_FILTER="${ENABLE_EP_WEIGHT_FILTER:-}"
 MAX_CUDAGRAPH_CAPTURE_SIZE="${MAX_CUDAGRAPH_CAPTURE_SIZE:-}"
 CUDAGRAPH_CAPTURE_SIZES="${CUDAGRAPH_CAPTURE_SIZES:-}"
+SPECULATIVE_CONFIG="${SPECULATIVE_CONFIG:-}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 HF_HOME="${HF_HOME:-$PWD/hf-cache}"
 TMPDIR="${TMPDIR:-$PWD/.tmp-exec}"
@@ -120,6 +121,9 @@ if [[ -n "$CUDAGRAPH_CAPTURE_SIZES" ]]; then
   # forces every decode step to pad to that fixed shape (batch-invariant
   # attention M across concurrency levels).
   EXTRA_ARGS+=(--cudagraph-capture-sizes $CUDAGRAPH_CAPTURE_SIZES)
+fi
+if [[ -n "$SPECULATIVE_CONFIG" ]]; then
+  EXTRA_ARGS+=(--speculative-config "$SPECULATIVE_CONFIG")
 fi
 
 "$PYTHON" scripts/preflight_8xb200_deepseek_v4_flash.py \

@@ -5,6 +5,7 @@ errors (retries). Greedy (temp=0) so it doubles as a load + sanity tool.
 """
 import argparse
 import asyncio
+import os
 import time
 
 import aiohttp
@@ -42,7 +43,9 @@ async def main():
     ap.add_argument("--max-tokens", type=int, default=256)
     ap.add_argument("--duration", type=float, default=60.0)
     ap.add_argument("--prompt-tokens", type=int, default=128)
+    ap.add_argument("--api-key", default=os.environ.get("VLLM_API_KEY", ""))
     args = ap.parse_args()
+    headers = {"Authorization": f"Bearer {args.api_key}"} if args.api_key else {}
 
     # Distinct prompt per worker (avoid prefix-cache-like effects); ~prompt-tokens words.
     base = (
@@ -59,7 +62,9 @@ async def main():
     stats = {"out": 0, "req": 0, "err": 0}
     t0 = time.monotonic()
     stop_at = t0 + args.duration
-    async with aiohttp.ClientSession(connector=conn, timeout=timeout) as session:
+    async with aiohttp.ClientSession(
+        connector=conn, timeout=timeout, headers=headers
+    ) as session:
         tasks = [
             asyncio.create_task(
                 worker(

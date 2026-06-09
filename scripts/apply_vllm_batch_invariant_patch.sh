@@ -53,6 +53,20 @@ else
   echo "WARNING: $DSV4_DST not found; skipped deterministic overlay" >&2
 fi
 
+# V1 scheduler no-mix patch: when VLLM_DETERMINISTIC_NO_MIX=1, never co-schedule
+# a new prefill with an in-flight decode. A decode token computed in a mixed
+# prefill+decode step runs at a different (variable) attention shape than in a
+# pure-decode step and drifts; this gate forces every step to be pure-prefill or
+# pure-decode -> byte-identical decode across concurrency (validated to conc 100).
+# Env-gated, so it is inert unless VLLM_DETERMINISTIC_NO_MIX=1.
+SCHED_DST="$SITE_PACKAGES/vllm/v1/core/sched/scheduler.py"
+if [[ -f "$SCHED_DST" ]]; then
+  cp "$ROOT/patches/dsv4-deterministic/v1/core/sched/scheduler.py" "$SCHED_DST"
+  echo "overlaid deterministic no-mix v1 scheduler.py"
+else
+  echo "WARNING: $SCHED_DST not found; skipped scheduler overlay" >&2
+fi
+
 "$VLLM_PYTHON" - <<'PY'
 import vllm.envs as envs
 
