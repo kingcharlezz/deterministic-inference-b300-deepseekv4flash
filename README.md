@@ -303,6 +303,31 @@ Install the deterministic vLLM edits with
 `scripts/apply_vllm_batch_invariant_patch.sh` (it applies the base patch and
 overlays `patches/dsv4-deterministic/{attention.py,nvidia/model.py}`).
 
+### Task quality (GSM8K)
+
+The deterministic config preserves task quality. `benchmark/gsm8k_eval.py` runs
+the standard 8-shot CoT GSM8K test set (1319 problems, greedy) over the
+`/v1/completions` endpoint:
+
+```bash
+curl -s -o benchmark/data/gsm8k_test.jsonl \
+  https://raw.githubusercontent.com/openai/grade-school-math/master/grade_school_math/data/test.jsonl
+python benchmark/gsm8k_eval.py --concurrency 1024 --max-tokens 512 \
+  --out runs/det_gsm8k.jsonl --label DET
+```
+
+Deterministic conc-1024 config: **95.45%** (1259/1319). Note that GSM8K's
+~950-token 8-shot prompts are prefill/KV-bound, so the server admits ~210-240
+sequences simultaneously (not the full 1024 client offered-load) and runs at
+~670 tok/s — the multi-thousand tok/s figures above need the short-prompt,
+decode-bound regime.
+
+Determinism caveat: byte-identical reproduction holds for prompts that fit in a
+single prefill chunk (the synthetic probe). For long prompts, chunked-prefill
+boundaries depend on batch composition, so full text can still drift across
+concurrency levels (final answers matched on 1311/1319 between conc 512 and
+1024); set `MAX_NUM_BATCHED_TOKENS` >= the longest prompt to remove that source.
+
 Run the fallback probe:
 
 ```bash

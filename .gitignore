@@ -14,3 +14,4 @@ runs/
 ep_kernels_workspace/
 results-*.json
 results-*.md
+benchmark/data/
